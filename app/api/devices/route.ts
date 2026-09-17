@@ -5,7 +5,7 @@ import { ApiError, apiError, boundedNumber, json, optionalBoolean, optionalText,
 export async function GET() {
   try {
     const context = await requireSchoolUser();
-    const devices = await env.DB.prepare(`SELECT d.id, d.device_id, d.device_name, d.student_id, d.enabled, d.last_seen, d.current_speed, d.gps_valid, d.network_signal, d.firmware_version,
+    const devices = await env.DB.prepare(`SELECT d.id, d.device_id, d.device_name, d.verify_code, d.student_id, d.enabled, d.last_seen, d.current_speed, d.gps_valid, d.network_signal, d.firmware_version,
       c.speed_limit, c.speed_alert_enabled, c.buzzer_enabled, c.remote_alarm, c.version, s.full_name, s.student_code, s.class_name
       FROM devices d JOIN device_configs c ON c.device_id = d.id
       LEFT JOIN students s ON s.id = d.student_id AND s.school_id = d.school_id
@@ -30,12 +30,23 @@ export async function POST(request: Request) {
     const configId = crypto.randomUUID();
     const now = new Date().toISOString();
     const speedLimit = boundedNumber(body.speed_limit, 'Giới hạn tốc độ', 10, 80)!;
+
+    // Xử lý mã xác thực phần cứng (verify_code: 1 đến 1.000.000.000)
+    let verifyCode = optionalText(body.verify_code, 'Mã xác thực phần cứng', 64)?.trim();
+    if (verifyCode) {
+      if (!/^[0-9]{1,10}$/.test(verifyCode) || BigInt(verifyCode) < 1n || BigInt(verifyCode) > 1000000000n) {
+        throw new ApiError(400, 'Mã xác thực phần cứng phải là số nguyên từ 1 đến 1.000.000.000 (tối đa 10 chữ số).', 'validation_error');
+      }
+    } else {
+      verifyCode = String(Math.floor(Math.random() * 999_999_999) + 1);
+    }
+
     await env.DB.batch([
-      env.DB.prepare('INSERT INTO devices (id, school_id, student_id, device_id, device_name, device_token_hash, enabled, gps_valid, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(id, context.schoolId, studentId, deviceId, requiredText(body.device_name, 'Tên thiết bị', 100), await sha256(rawToken), optionalBoolean(body.enabled, true) ? 1 : 0, 0, now, now),
+      env.DB.prepare('INSERT INTO devices (id, school_id, student_id, device_id, device_name, device_token_hash, verify_code, enabled, gps_valid, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(id, context.schoolId, studentId, deviceId, requiredText(body.device_name, 'Tên thiết bị', 100), await sha256(rawToken), verifyCode, optionalBoolean(body.enabled, true) ? 1 : 0, 0, now, now),
       env.DB.prepare('INSERT INTO device_configs (id, device_id, speed_limit, speed_alert_enabled, buzzer_enabled, remote_alarm, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(configId, id, speedLimit, optionalBoolean(body.speed_alert_enabled, true) ? 1 : 0, optionalBoolean(body.buzzer_enabled, true) ? 1 : 0, 0, 1, now, now),
     ]);
     await audit(context, 'device.create', 'device', id, { deviceId });
-    return json({ success: true, device: { id, deviceId }, provisioning: { device_token: rawToken, note: 'Sao chép token ngay bây giờ; hệ thống chỉ hiển thị token một lần.' } }, { status: 201 });
+    return json({ success: true, device: { id, deviceId, verify_code: verifyCode }, provisioning: { device_token: rawToken, verify_code: verifyCode, note: 'Sao chép token ngay bây giờ; hệ thống chỉ hiển thị token một lần.' } }, { status: 201 });
   } catch (error) { return apiError(error); }
 }
 
@@ -60,10 +71,23 @@ export async function PATCH(request: Request) {
     const studentId = optionalText(body.student_id, 'student_id', 64);
     if (studentId) await validateStudent(context.schoolId, studentId);
     const speedLimit = boundedNumber(body.speed_limit, 'Giới hạn tốc độ', 10, 80)!;
-    await env.DB.batch([
+
+    const patchBatch = [
       env.DB.prepare('UPDATE devices SET student_id = ?, device_name = ?, enabled = ?, updated_at = ? WHERE id = ? AND school_id = ?').bind(studentId, requiredText(body.device_name, 'Tên thiết bị', 100), optionalBoolean(body.enabled, true) ? 1 : 0, now, id, context.schoolId),
       env.DB.prepare('UPDATE device_configs SET speed_limit = ?, speed_alert_enabled = ?, buzzer_enabled = ?, version = version + 1, updated_at = ? WHERE device_id = ?').bind(speedLimit, optionalBoolean(body.speed_alert_enabled, true) ? 1 : 0, optionalBoolean(body.buzzer_enabled, true) ? 1 : 0, now, id),
-    ]);
+    ];
+
+    const verifyCode = optionalText(body.verify_code, 'Mã xác thực phần cứng', 64)?.trim();
+    if (verifyCode) {
+      if (!/^[0-9]{1,10}$/.test(verifyCode) || BigInt(verifyCode) < 1n || BigInt(verifyCode) > 1000000000n) {
+        throw new ApiError(400, 'Mã xác thực phải là số nguyên từ 1 đến 1.000.000.000 (tối đa 10 chữ số).', 'validation_error');
+      }
+      patchBatch.push(
+        env.DB.prepare('UPDATE devices SET verify_code = ? WHERE id = ? AND school_id = ?').bind(verifyCode, id, context.schoolId)
+      );
+    }
+
+    await env.DB.batch(patchBatch);
     await audit(context, 'device.update', 'device', id);
     return json({ success: true });
   } catch (error) { return apiError(error); }

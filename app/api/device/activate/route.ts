@@ -42,10 +42,14 @@ export async function POST(request: Request) {
     const schoolId = school.id;
     const now = new Date().toISOString();
 
-    // 2. Tìm hoặc khởi tạo thiết bị: hỗ trợ tìm theo Custom Device ID hoặc Hardware Verify Code
+    // 2. Tìm thiết bị trong hệ thống:
+    // Thiết bị BẮT BUỘC phải tồn tại trước trong DB (xuất xưởng bởi Admin hoặc tạo bởi Nhà trường).
+    // Không tự động tạo mới thiết bị nếu không tìm thấy để đảm bảo bảo mật và chống ghép nối sai.
+
+    // Ưu tiên 1: Tìm theo verify_code (mã xác thực phần cứng từ 1 đến 1 tỷ)
     let device = await env.DB.prepare(
-      'SELECT id, school_id, device_id, device_name, verify_code, pairing_pending, pairing_requested_at, student_id, enabled FROM devices WHERE school_id = ? AND (device_id = ? OR verify_code = ?)'
-    ).bind(schoolId, rawDeviceId, verifyCode).first<{
+      'SELECT id, school_id, device_id, device_name, verify_code, pairing_pending, pairing_requested_at, student_id, enabled FROM devices WHERE verify_code = ?'
+    ).bind(verifyCode).first<{
       id: string;
       school_id: string;
       device_id: string;
@@ -57,38 +61,43 @@ export async function POST(request: Request) {
       enabled: number;
     }>();
 
-    if (device) {
-      // Nếu thiết bị đã có mã verify_code nhưng khác mã học sinh nhập -> từ chối
-      if (device.verify_code && device.verify_code.trim() !== verifyCode) {
-        throw new ApiError(400, 'ID xác minh không chính xác! Vui lòng kiểm tra lại mã được khai báo trong code thiết bị.', 'invalid_verify_code');
+    // Ưu tiên 2: Nếu chưa tìm thấy theo verify_code, tìm theo device_id
+    if (!device) {
+      device = await env.DB.prepare(
+        'SELECT id, school_id, device_id, device_name, verify_code, pairing_pending, pairing_requested_at, student_id, enabled FROM devices WHERE device_id = ?'
+      ).bind(rawDeviceId).first();
+    }
+
+    // Nếu không tìm thấy bất kỳ thiết bị nào -> Báo lỗi 404, KHÔNG tự động tạo
+    if (!device) {
+      throw new ApiError(
+        404,
+        'Thiết bị không tồn tại trong hệ thống! Vui lòng kiểm tra lại thiết bị hoặc liên hệ nhà trường/quản trị viên để đăng ký thiết bị.',
+        'device_not_found'
+      );
+    }
+
+    // Nếu tìm thấy theo device_id nhưng mã xác thực phần cứng không khớp -> Báo lỗi 400
+    if (device.verify_code && device.verify_code.trim() !== verifyCode) {
+      throw new ApiError(
+        400,
+        'Mã xác thực không chính xác! Vui lòng kiểm tra lại mã được nạp trong code thiết bị.',
+        'invalid_verify_code'
+      );
+    }
+
+    // Nếu người dùng đổi tên mã xe tùy chỉnh (rawDeviceId) khác với ban đầu, kiểm tra trùng lặp trong trường
+    if (rawDeviceId !== device.device_id) {
+      const duplicate = await env.DB.prepare(
+        'SELECT id FROM devices WHERE school_id = ? AND device_id = ? AND id != ?'
+      ).bind(schoolId, rawDeviceId, device.id).first();
+      if (duplicate) {
+        throw new ApiError(
+          409,
+          `Mã ID xe "${rawDeviceId}" đã được sử dụng bởi xe khác trong trường. Vui lòng chọn mã khác.`,
+          'device_id_conflict'
+        );
       }
-    } else {
-      // Chưa có trong DB -> Tự động tạo thiết bị với Custom ID và mã xác thực phần cứng này
-      const newDeviceId = crypto.randomUUID();
-      const rawToken = createDeviceToken();
-      const tokenHash = await sha256(rawToken);
-      const configId = crypto.randomUUID();
-
-      await env.DB.batch([
-        env.DB.prepare(
-          'INSERT INTO devices (id, school_id, device_id, device_name, device_token_hash, verify_code, enabled, gps_valid, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(newDeviceId, schoolId, rawDeviceId, `Xe của ${studentName}`, tokenHash, verifyCode, 1, 0, now, now),
-        env.DB.prepare(
-          'INSERT INTO device_configs (id, device_id, speed_limit, speed_alert_enabled, buzzer_enabled, remote_alarm, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(configId, newDeviceId, 40, 1, 1, 0, 1, now, now),
-      ]);
-
-      device = {
-        id: newDeviceId,
-        school_id: schoolId,
-        device_id: rawDeviceId,
-        device_name: `Xe của ${studentName}`,
-        verify_code: verifyCode,
-        pairing_pending: 0,
-        pairing_requested_at: null,
-        student_id: null,
-        enabled: 1,
-      };
     }
 
     // 3. Tạo hồ sơ học sinh
@@ -106,10 +115,10 @@ export async function POST(request: Request) {
       ).bind(crypto.randomUUID(), studentId, parentName, 'Phụ huynh', parentPhone, 1, now, now).run();
     }
 
-    // 5. Nối thiết bị với học sinh và lưu Custom ID + Verify Code
+    // 5. Nối thiết bị với học sinh và lưu Custom ID + Verify Code + Cập nhật trường học
     await env.DB.prepare(
-      'UPDATE devices SET student_id = ?, device_id = ?, device_name = ?, verify_code = ?, paired_at = ?, pairing_pending = 0, enabled = 1, updated_at = ? WHERE id = ?'
-    ).bind(studentId, rawDeviceId, `Xe của ${studentName} (${studentClass})`, verifyCode, now, now, device.id).run();
+      'UPDATE devices SET student_id = ?, school_id = ?, device_id = ?, device_name = ?, verify_code = ?, paired_at = ?, pairing_pending = 0, enabled = 1, updated_at = ? WHERE id = ?'
+    ).bind(studentId, schoolId, rawDeviceId, `Xe của ${studentName} (${studentClass})`, verifyCode, now, now, device.id).run();
 
     return json({
       success: true,

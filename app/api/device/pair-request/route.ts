@@ -14,8 +14,14 @@ export async function POST(request: Request) {
     }
     const now = new Date().toISOString();
 
+    // Kiểm tra thiết bị có tồn tại trong hệ thống không
+    const existing = await env.DB.prepare('SELECT id FROM devices WHERE device_id = ?').bind(deviceId).first();
+    if (!existing) {
+      throw new ApiError(404, 'Thiết bị chưa được đăng ký trong hệ thống! Vui lòng đăng ký thiết bị trước.', 'device_not_found');
+    }
+
     // Cập nhật trạng thái chờ ghép đôi cho thiết bị
-    const updated = await env.DB.prepare(
+    await env.DB.prepare(
       'UPDATE devices SET pairing_pending = 1, pairing_requested_at = ?, verify_code = ?, updated_at = ? WHERE device_id = ?'
     ).bind(now, verifySecret, now, deviceId).run();
 

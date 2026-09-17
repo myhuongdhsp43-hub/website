@@ -15,8 +15,15 @@ export async function ensureSchema() {
     if (!env?.DB) return;
     await env.DB.prepare('SELECT 1 FROM users LIMIT 1').first();
     await env.DB.prepare('SELECT 1 FROM app_sessions LIMIT 1').first();
-    // Verify new column exists
+    // Verify new column exists and backfill any missing verify_code
     await env.DB.prepare('SELECT verify_code FROM devices LIMIT 1').first();
+    try {
+      await env.DB.prepare(`
+        UPDATE devices 
+        SET verify_code = CAST(ABS(RANDOM()) % 900000000 + 100000000 AS TEXT)
+        WHERE verify_code IS NULL OR verify_code = ''
+      `).run();
+    } catch {}
     initialized = true;
     return;
   } catch {

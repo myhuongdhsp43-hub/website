@@ -9,7 +9,7 @@ type View = 'overview' | 'map' | 'students' | 'devices' | 'alerts' | 'history' |
 type DashboardDevice = { helmet_worn: number | null; helmet_detection_enabled: number; id: string; device_id: string; current_speed: number | null; speed_limit: number; gps_valid: number; last_seen: string | null; network_signal: number | null; full_name: string | null; student_code: string | null; class_name: string | null; online: number; overspeed: number };
 type DashboardData = { user: { displayName: string; email: string; role: string; schoolName: string }; stats: Record<'students' | 'devices' | 'online' | 'offline' | 'moving' | 'todayOverspeed' | 'weekOverspeed' | 'openAlerts', number>; devices: DashboardDevice[] };
 type Student = { id: string; student_code: string; full_name: string; class_name: string; grade: string | null; academic_year?: string | null; vehicle_plate?: string | null; notes?: string | null; active: number; device_id: string | null };
-type Device = { id: string; device_id: string; device_name: string; student_id: string | null; enabled: number; last_seen: string | null; current_speed: number | null; speed_limit: number; speed_alert_enabled: number; buzzer_enabled: number; remote_alarm: number; version: number; full_name: string | null; student_code: string | null };
+type Device = { id: string; device_id: string; device_name: string; verify_code?: string | null; student_id: string | null; enabled: number; last_seen: string | null; current_speed: number | null; speed_limit: number; speed_alert_enabled: number; buzzer_enabled: number; remote_alarm: number; version: number; full_name: string | null; student_code: string | null };
 type Alert = { type: string; helmet_sms_total: number; helmet_sms_accepted: number; id: string; title: string; message: string; status: string; created_at: string; full_name: string | null; class_name: string | null; device_id: string | null; max_speed: number | null; speed_limit: number | null; sms_sent: number | null };
 type Contact = { id: string; name: string; relationship: string; phone: string; sms_enabled: number };
 type StudentDetail = { student: Student & { device_name: string | null; current_speed: number | null; last_latitude: number | null; last_longitude: number | null; gps_valid: number; satellites: number | null; hdop: number | null; last_seen: string | null; network_signal: number | null; enabled: number | null; speed_limit: number | null; speed_alert_enabled: number | null; buzzer_enabled: number | null }; contacts: Contact[]; stats: { max_today: number; max_week: number; count_today: number; count_week: number; count_month: number }; events: Array<{ id: string; started_at: string; ended_at: string | null; max_speed: number; speed_limit: number; latitude: number | null; longitude: number | null; gps_valid: number; sms_sent: number; device_id: string }> };
@@ -219,13 +219,14 @@ function DevicesView({ onMessage }: { onMessage: (message: { text: string; kind:
           </div>
           <div className="p-4 bg-slate-50 rounded-2xl border flex flex-col items-center">
             <img
-              src={'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(typeof window !== 'undefined' ? (window.location.origin + '/activate?device_id=' + qrModalDevice.device_id) : ('https://antoanxe.edu.vn/activate?device_id=' + qrModalDevice.device_id))}
+              src={'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent((typeof window !== 'undefined' ? window.location.origin : 'https://antoanxe.edu.vn') + '/activate?device_id=' + encodeURIComponent(qrModalDevice.device_id) + (qrModalDevice.verify_code ? '&verify_code=' + encodeURIComponent(qrModalDevice.verify_code) : ''))}
               alt={'QR Code ' + qrModalDevice.device_id}
               className="w-48 h-48 rounded-lg shadow-sm bg-white p-2"
             />
-            <p className="mt-3 font-mono font-bold text-sm text-emerald-700">{qrModalDevice.device_id}</p>
-            <p className="mt-1 text-xs text-slate-500 break-all">
-              {typeof window !== 'undefined' ? (window.location.origin + '/activate?device_id=' + qrModalDevice.device_id) : ('/activate?device_id=' + qrModalDevice.device_id)}
+            <p className="mt-3 font-mono font-bold text-sm text-emerald-700">Mã ID xe: {qrModalDevice.device_id}</p>
+            <p className="mt-1 font-mono text-xs text-indigo-700">Mã xác thực phần cứng: <span className="font-bold">{qrModalDevice.verify_code || 'Chưa gán'}</span></p>
+            <p className="mt-2 text-[10px] text-slate-500 break-all bg-slate-100 p-2 rounded-lg font-mono">
+              {(typeof window !== 'undefined' ? window.location.origin : '') + '/activate?device_id=' + encodeURIComponent(qrModalDevice.device_id) + (qrModalDevice.verify_code ? '&verify_code=' + encodeURIComponent(qrModalDevice.verify_code) : '')}
             </p>
           </div>
           <p className="mt-3 text-xs text-slate-500">
@@ -234,7 +235,7 @@ function DevicesView({ onMessage }: { onMessage: (message: { text: string; kind:
           <div className="mt-4 flex gap-2">
             <button
               onClick={() => {
-                const url = window.location.origin + '/activate?device_id=' + qrModalDevice.device_id;
+                const url = window.location.origin + '/activate?device_id=' + encodeURIComponent(qrModalDevice.device_id) + (qrModalDevice.verify_code ? '&verify_code=' + encodeURIComponent(qrModalDevice.verify_code) : '');
                 navigator.clipboard.writeText(url);
                 onMessage({ text: 'Đã sao chép link kích hoạt của ' + qrModalDevice.device_id + '!', kind: 'success' });
               }}
@@ -259,7 +260,7 @@ function DeviceForm({ device, students, onClose, onDone, onMessage }: { device?:
   const [saving, setSaving] = useState(false);
   async function submit(form: FormData) {
     setSaving(true);
-    const body = { id: device?.id, device_id: form.get('device_id'), device_name: form.get('device_name'), student_id: form.get('student_id') || null, speed_limit: Number(form.get('speed_limit')), speed_alert_enabled: form.get('speed_alert_enabled') === 'on', buzzer_enabled: form.get('buzzer_enabled') === 'on', enabled: form.get('enabled') === 'on' };
+    const body = { id: device?.id, device_id: form.get('device_id'), device_name: form.get('device_name'), verify_code: form.get('verify_code') || undefined, student_id: form.get('student_id') || null, speed_limit: Number(form.get('speed_limit')), speed_alert_enabled: form.get('speed_alert_enabled') === 'on', buzzer_enabled: form.get('buzzer_enabled') === 'on', enabled: form.get('enabled') === 'on' };
     try {
       const data = await api<{ provisioning?: { device_token: string } }>('/api/devices', { method: device ? 'PATCH' : 'POST', body: JSON.stringify(body) });
       onDone(data.provisioning?.device_token);
@@ -269,6 +270,7 @@ function DeviceForm({ device, students, onClose, onDone, onMessage }: { device?:
   return <FormBox title={device ? `Cấu hình thiết bị · ${device.device_id}` : 'Thêm thiết bị'} onClose={onClose}><form key={device?.id ?? 'new'} action={submit} className="grid gap-3 sm:grid-cols-2">
     <Input label="device_id" name="device_id" placeholder="XE001" defaultValue={device?.device_id} disabled={Boolean(device)} required />
     <Input label="Tên thiết bị" name="device_name" placeholder="Xe máy điện 001" defaultValue={device?.device_name} required />
+    <Input label="Mã xác thực phần cứng (1 - 1 tỷ, bỏ trống sẽ tự sinh)" name="verify_code" placeholder="VD: 9824 hoặc để trống" defaultValue={device?.verify_code ?? ''} />
     <label className="grid gap-1 text-sm font-medium">Gán học sinh<select name="student_id" className="form-input" defaultValue={device?.student_id ?? ''}><option value="">Chưa gán</option>{students.map((student) => <option value={student.id} key={student.id}>{student.full_name} · {student.student_code}</option>)}</select></label>
     <Input label="Giới hạn (km/h)" name="speed_limit" type="number" min="10" max="80" defaultValue={device?.speed_limit ?? 40} required />
     <div className="flex flex-wrap gap-5 sm:col-span-2"><Toggle label="Bật cảnh báo vượt tốc" name="speed_alert_enabled" defaultChecked={device ? Boolean(device.speed_alert_enabled) : true} /><Toggle label="Bật còi trên xe" name="buzzer_enabled" defaultChecked={device ? Boolean(device.buzzer_enabled) : true} /><Toggle label="Thiết bị hoạt động" name="enabled" defaultChecked={device ? Boolean(device.enabled) : true} /></div>

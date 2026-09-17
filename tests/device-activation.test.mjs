@@ -57,6 +57,22 @@ test('activation route validates verify_code up to 10 digits (1 to 1000000000)',
   assert.equal(isValid('abc'), false);
 });
 
+test('activation route strictly requires pre-registered devices and rejects phantom devices', async () => {
+  const activateSource = await readFile(new URL('../app/api/device/activate/route.ts', import.meta.url), 'utf8');
+  assert.match(activateSource, /device_not_found/);
+  assert.doesNotMatch(activateSource, /Tự động tạo thiết bị với Custom ID/);
+});
+
+test('dashboard and master admin QR codes include both device_id and verify_code in activation link', async () => {
+  const dashboardSource = await readFile(new URL('../components/dashboard-app.tsx', import.meta.url), 'utf8');
+  const masterSource = await readFile(new URL('../app/master-admin/page.tsx', import.meta.url), 'utf8');
+  const devicesApiSource = await readFile(new URL('../app/api/devices/route.ts', import.meta.url), 'utf8');
+
+  assert.match(dashboardSource, /activate\?device_id=.*verify_code=/);
+  assert.match(masterSource, /activate\?device_id=.*verify_code=/);
+  assert.match(devicesApiSource, /d\.verify_code/);
+});
+
 test('master admin route authenticates with Admin123@ and supports random generation up to 1 billion', async () => {
   const masterSource = await readFile(new URL('../app/api/master-admin/route.ts', import.meta.url), 'utf8');
   assert.match(masterSource, /Admin123@/);

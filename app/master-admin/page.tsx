@@ -620,7 +620,7 @@ export default function MasterAdminPage() {
                       ? `${window.location.origin}/activate?device_id=${qrModalDevice.device_id}${
                           qrModalDevice.verify_code ? `&verify_code=${qrModalDevice.verify_code}` : ''
                         }`
-                      : `/activate?device_id=${qrModalDevice.device_id}`
+                      : `/activate?device_id=${encodeURIComponent(qrModalDevice.device_id)}${qrModalDevice.verify_code ? `&verify_code=${encodeURIComponent(qrModalDevice.verify_code)}` : ''}`
                   )}`}
                   alt="QR Code"
                   className="w-44 h-44"
