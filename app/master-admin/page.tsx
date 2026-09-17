@@ -7,6 +7,8 @@ type MasterDevice = {
   device_id: string;
   device_name: string;
   verify_code: string | null;
+  device_token?: string | null;
+  account_token?: string | null;
   enabled: number;
   last_seen: string | null;
   paired_at: string | null;
@@ -33,6 +35,7 @@ type MasterSchool = {
   id: string;
   name: string;
   address: string | null;
+  account_token?: string | null;
   created_at: string;
 };
 
@@ -618,7 +621,8 @@ export default function MasterAdminPage() {
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
                     typeof window !== 'undefined'
                       ? `${window.location.origin}/activate?device_id=${qrModalDevice.device_id}${
-                          qrModalDevice.verify_code ? `&verify_code=${qrModalDevice.verify_code}` : ''
+                          (qrModalDevice.verify_code ? `&verify_code=${qrModalDevice.verify_code}` : '') +
+                          (qrModalDevice.account_token ? `&account_token=${qrModalDevice.account_token}` : '')
                         }`
                       : `/activate?device_id=${encodeURIComponent(qrModalDevice.device_id)}${qrModalDevice.verify_code ? `&verify_code=${encodeURIComponent(qrModalDevice.verify_code)}` : ''}`
                   )}`}
@@ -630,7 +634,8 @@ export default function MasterAdminPage() {
                 <button
                   onClick={() => {
                     const url = `${window.location.origin}/activate?device_id=${qrModalDevice.device_id}${
-                      qrModalDevice.verify_code ? `&verify_code=${qrModalDevice.verify_code}` : ''
+                      (qrModalDevice.verify_code ? `&verify_code=${qrModalDevice.verify_code}` : '') +
+                      (qrModalDevice.account_token ? `&account_token=${qrModalDevice.account_token}` : '')
                     }`;
                     navigator.clipboard.writeText(url);
                     alert('Đã sao chép link kích hoạt!');

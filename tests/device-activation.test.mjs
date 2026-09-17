@@ -81,3 +81,38 @@ test('master admin route authenticates with Admin123@ and supports random genera
   assert.match(masterSource, /CREATE_DEVICE/);
   assert.match(masterSource, /DELETE_DEVICE/);
 });
+
+test('migration 0006 adds account_token to schools and device_token to devices', async () => {
+  const migration = await readFile(new URL('../drizzle/0006_account_and_device_tokens.sql', import.meta.url), 'utf8');
+  assert.match(migration, /ALTER TABLE `schools` ADD `account_token` text/);
+  assert.match(migration, /ALTER TABLE `devices` ADD `device_token` text/);
+  assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS `uq_schools_account_token`/);
+});
+
+test('activation route and QR codes include and enforce account_token', async () => {
+  const activateSource = await readFile(new URL('../app/api/device/activate/route.ts', import.meta.url), 'utf8');
+  const dashboardSource = await readFile(new URL('../components/dashboard-app.tsx', import.meta.url), 'utf8');
+  const masterSource = await readFile(new URL('../app/master-admin/page.tsx', import.meta.url), 'utf8');
+
+  // Activate route checks account_token
+  assert.match(activateSource, /account_token/);
+  assert.match(activateSource, /invalid_account_token/);
+  assert.match(activateSource, /device_token/);
+
+  // QR codes include account_token
+  assert.match(dashboardSource, /account_token=/);
+  assert.match(masterSource, /account_token=/);
+});
+
+test('hardware token endpoint /api/device/token exists and returns device_token for Flash storage', async () => {
+  const tokenRouteSource = await readFile(new URL('../app/api/device/token/route.ts', import.meta.url), 'utf8');
+  const pairRouteSource = await readFile(new URL('../app/api/device/pair-request/route.ts', import.meta.url), 'utf8');
+
+  assert.match(tokenRouteSource, /verify_secret/);
+  assert.match(tokenRouteSource, /device_token/);
+  assert.match(tokenRouteSource, /telemetry_url/);
+  assert.match(tokenRouteSource, /paired/);
+
+  assert.match(pairRouteSource, /device_token/);
+  assert.match(pairRouteSource, /paired/);
+});

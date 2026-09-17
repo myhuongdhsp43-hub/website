@@ -20,23 +20,41 @@ export async function POST(request: Request) {
     }
     const studentName = requiredText(body.student_name, 'Họ và tên học sinh', 100).trim();
     const studentClass = requiredText(body.student_class, 'Lớp học', 32).trim().toUpperCase();
+    const accountToken = optionalText(body.account_token, 'Token xác thực tài khoản', 64)?.trim();
     const schoolIdInput = optionalText(body.school_id, 'Trường học', 64);
     const parentPhone = optionalText(body.parent_phone, 'Số điện thoại phụ huynh', 20)?.trim();
     const parentName = optionalText(body.parent_name, 'Tên phụ huynh', 100)?.trim() || `Phụ huynh em ${studentName}`;
 
-    // 1. Xác định trường học
+    // 1. Xác định trường học / tài khoản quản lý
     let school = null;
-    if (schoolIdInput) {
-      school = await env.DB.prepare('SELECT id, name FROM schools WHERE id = ?').bind(schoolIdInput).first<{ id: string; name: string }>();
+    if (accountToken) {
+      school = await env.DB.prepare(
+        'SELECT id, name, account_token FROM schools WHERE account_token = ?'
+      ).bind(accountToken).first<{ id: string; name: string; account_token: string }>();
+
+      if (!school) {
+        throw new ApiError(401, 'Token xác thực tài khoản không chính xác hoặc không tồn tại!', 'invalid_account_token');
+      }
+    } else if (schoolIdInput) {
+      school = await env.DB.prepare(
+        'SELECT id, name, account_token FROM schools WHERE id = ?'
+      ).bind(schoolIdInput).first<{ id: string; name: string; account_token: string }>();
     }
+
     if (!school) {
-      school = await env.DB.prepare('SELECT id, name FROM schools ORDER BY created_at ASC LIMIT 1').first<{ id: string; name: string }>();
+      school = await env.DB.prepare(
+        'SELECT id, name, account_token FROM schools ORDER BY created_at ASC LIMIT 1'
+      ).first<{ id: string; name: string; account_token: string }>();
     }
+
     if (!school) {
       const newSchoolId = crypto.randomUUID();
+      const newAccToken = 'acc_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16);
       const now = new Date().toISOString();
-      await env.DB.prepare('INSERT INTO schools (id, name, timezone, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').bind(newSchoolId, 'Trường THCS Mặc Định', 'Asia/Ho_Chi_Minh', now, now).run();
-      school = { id: newSchoolId, name: 'Trường THCS Mặc Định' };
+      await env.DB.prepare(
+        'INSERT INTO schools (id, name, account_token, timezone, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(newSchoolId, 'Trường THCS Mặc Định', newAccToken, 'Asia/Ho_Chi_Minh', now, now).run();
+      school = { id: newSchoolId, name: 'Trường THCS Mặc Định', account_token: newAccToken };
     }
 
     const schoolId = school.id;
@@ -48,13 +66,14 @@ export async function POST(request: Request) {
 
     // Ưu tiên 1: Tìm theo verify_code (mã xác thực phần cứng từ 1 đến 1 tỷ)
     let device = await env.DB.prepare(
-      'SELECT id, school_id, device_id, device_name, verify_code, pairing_pending, pairing_requested_at, student_id, enabled FROM devices WHERE verify_code = ?'
+      'SELECT id, school_id, device_id, device_name, verify_code, device_token, pairing_pending, pairing_requested_at, student_id, enabled FROM devices WHERE verify_code = ?'
     ).bind(verifyCode).first<{
       id: string;
       school_id: string;
       device_id: string;
       device_name: string;
       verify_code: string | null;
+      device_token: string | null;
       pairing_pending: number;
       pairing_requested_at: string | null;
       student_id: string | null;
@@ -64,7 +83,7 @@ export async function POST(request: Request) {
     // Ưu tiên 2: Nếu chưa tìm thấy theo verify_code, tìm theo device_id
     if (!device) {
       device = await env.DB.prepare(
-        'SELECT id, school_id, device_id, device_name, verify_code, pairing_pending, pairing_requested_at, student_id, enabled FROM devices WHERE device_id = ?'
+        'SELECT id, school_id, device_id, device_name, verify_code, device_token, pairing_pending, pairing_requested_at, student_id, enabled FROM devices WHERE device_id = ?'
       ).bind(rawDeviceId).first();
     }
 
@@ -115,16 +134,29 @@ export async function POST(request: Request) {
       ).bind(crypto.randomUUID(), studentId, parentName, 'Phụ huynh', parentPhone, 1, now, now).run();
     }
 
-    // 5. Nối thiết bị với học sinh và lưu Custom ID + Verify Code + Cập nhật trường học
+    // 5. Cấp / duy trì Device Token cho phần cứng lưu vào Flash
+    let deviceToken = device.device_token;
+    if (!deviceToken) {
+      deviceToken = createDeviceToken();
+    }
+    const tokenHash = await sha256(deviceToken);
+
+    // 6. Nối thiết bị với học sinh và lưu Custom ID + Verify Code + Token phần cứng + Cập nhật trường học
     await env.DB.prepare(
-      'UPDATE devices SET student_id = ?, school_id = ?, device_id = ?, device_name = ?, verify_code = ?, paired_at = ?, pairing_pending = 0, enabled = 1, updated_at = ? WHERE id = ?'
-    ).bind(studentId, schoolId, rawDeviceId, `Xe của ${studentName} (${studentClass})`, verifyCode, now, now, device.id).run();
+      'UPDATE devices SET student_id = ?, school_id = ?, device_id = ?, device_name = ?, device_token = ?, device_token_hash = ?, verify_code = ?, paired_at = ?, pairing_pending = 0, enabled = 1, updated_at = ? WHERE id = ?'
+    ).bind(studentId, schoolId, rawDeviceId, `Xe của ${studentName} (${studentClass})`, deviceToken, tokenHash, verifyCode, now, now, device.id).run();
+
+    const origin = new URL(request.url).origin;
+    const apiTokenUrl = `${origin}/api/device/token?device_id=${encodeURIComponent(rawDeviceId)}&verify_secret=${encodeURIComponent(verifyCode)}`;
 
     return json({
       success: true,
       message: 'Xác thực và ghép đôi thiết bị thành công!',
       data: {
         device_id: rawDeviceId,
+        device_token: deviceToken,
+        account_token: school.account_token,
+        api_token_url: apiTokenUrl,
         student_name: studentName,
         student_class: studentClass,
         school_name: school.name,

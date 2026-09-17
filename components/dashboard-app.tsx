@@ -7,9 +7,9 @@ import { HelmetSmsPanel } from './helmet-sms-panel';
 
 type View = 'overview' | 'map' | 'students' | 'devices' | 'alerts' | 'history' | 'statistics' | 'settings' | 'account';
 type DashboardDevice = { helmet_worn: number | null; helmet_detection_enabled: number; id: string; device_id: string; current_speed: number | null; speed_limit: number; gps_valid: number; last_seen: string | null; network_signal: number | null; full_name: string | null; student_code: string | null; class_name: string | null; online: number; overspeed: number };
-type DashboardData = { user: { displayName: string; email: string; role: string; schoolName: string }; stats: Record<'students' | 'devices' | 'online' | 'offline' | 'moving' | 'todayOverspeed' | 'weekOverspeed' | 'openAlerts', number>; devices: DashboardDevice[] };
+type DashboardData = { user: { displayName: string; email: string; role: string; schoolName: string; accountToken?: string | null }; stats: Record<'students' | 'devices' | 'online' | 'offline' | 'moving' | 'todayOverspeed' | 'weekOverspeed' | 'openAlerts', number>; devices: DashboardDevice[] };
 type Student = { id: string; student_code: string; full_name: string; class_name: string; grade: string | null; academic_year?: string | null; vehicle_plate?: string | null; notes?: string | null; active: number; device_id: string | null };
-type Device = { id: string; device_id: string; device_name: string; verify_code?: string | null; student_id: string | null; enabled: number; last_seen: string | null; current_speed: number | null; speed_limit: number; speed_alert_enabled: number; buzzer_enabled: number; remote_alarm: number; version: number; full_name: string | null; student_code: string | null };
+type Device = { id: string; device_id: string; device_name: string; verify_code?: string | null; device_token?: string | null; student_id: string | null; enabled: number; last_seen: string | null; current_speed: number | null; speed_limit: number; speed_alert_enabled: number; buzzer_enabled: number; remote_alarm: number; version: number; full_name: string | null; student_code: string | null };
 type Alert = { type: string; helmet_sms_total: number; helmet_sms_accepted: number; id: string; title: string; message: string; status: string; created_at: string; full_name: string | null; class_name: string | null; device_id: string | null; max_speed: number | null; speed_limit: number | null; sms_sent: number | null };
 type Contact = { id: string; name: string; relationship: string; phone: string; sms_enabled: number };
 type StudentDetail = { student: Student & { device_name: string | null; current_speed: number | null; last_latitude: number | null; last_longitude: number | null; gps_valid: number; satellites: number | null; hdop: number | null; last_seen: string | null; network_signal: number | null; enabled: number | null; speed_limit: number | null; speed_alert_enabled: number | null; buzzer_enabled: number | null }; contacts: Contact[]; stats: { max_today: number; max_week: number; count_today: number; count_week: number; count_month: number }; events: Array<{ id: string; started_at: string; ended_at: string | null; max_speed: number; speed_limit: number; latitude: number | null; longitude: number | null; gps_valid: number; sms_sent: number; device_id: string }> };
@@ -189,9 +189,10 @@ function DevicesView({ onMessage }: { onMessage: (message: { text: string; kind:
   const [editing, setEditing] = useState<Device | null>(null);
   const [provisioning, setProvisioning] = useState<string | null>(null);
   const [qrModalDevice, setQrModalDevice] = useState<Device | null>(null);
+  const [accountToken, setAccountToken] = useState<string>('');
   const [reload, setReload] = useState(0);
   const refresh = () => setReload((value) => value + 1);
-  useEffect(() => { void Promise.all([api<{ devices: Device[] }>('/api/devices'), api<{ students: Student[] }>('/api/students')]).then(([dev, stu]) => { setDevices(dev.devices); setStudents(stu.students); }).catch((error) => onMessage({ text: getError(error), kind: 'error' })); }, [reload, onMessage]);
+  useEffect(() => { void Promise.all([api<{ devices: Device[]; account_token?: string }>('/api/devices'), api<{ students: Student[] }>('/api/students')]).then(([dev, stu]) => { setDevices(dev.devices); if (dev.account_token) setAccountToken(dev.account_token); setStudents(stu.students); }).catch((error) => onMessage({ text: getError(error), kind: 'error' })); }, [reload, onMessage]);
   async function remoteAlarm(id: string) {
     if (!window.confirm('Thiết bị sẽ bíp tối đa 5 giây sau lần telemetry kế tiếp. Tiếp tục?')) return;
     try { const result = await api<{ message: string }>('/api/devices', { method: 'PATCH', body: JSON.stringify({ id, action: 'remote_alarm' }) }); onMessage({ text: result.message, kind: 'success' }); refresh(); }
@@ -219,14 +220,14 @@ function DevicesView({ onMessage }: { onMessage: (message: { text: string; kind:
           </div>
           <div className="p-4 bg-slate-50 rounded-2xl border flex flex-col items-center">
             <img
-              src={'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent((typeof window !== 'undefined' ? window.location.origin : 'https://antoanxe.edu.vn') + '/activate?device_id=' + encodeURIComponent(qrModalDevice.device_id) + (qrModalDevice.verify_code ? '&verify_code=' + encodeURIComponent(qrModalDevice.verify_code) : ''))}
+              src={'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent((typeof window !== 'undefined' ? window.location.origin : 'https://antoanxe.edu.vn') + '/activate?device_id=' + encodeURIComponent(qrModalDevice.device_id) + (qrModalDevice.verify_code ? '&verify_code=' + encodeURIComponent(qrModalDevice.verify_code) : '') + (accountToken ? '&account_token=' + encodeURIComponent(accountToken) : ''))}
               alt={'QR Code ' + qrModalDevice.device_id}
               className="w-48 h-48 rounded-lg shadow-sm bg-white p-2"
             />
             <p className="mt-3 font-mono font-bold text-sm text-emerald-700">Mã ID xe: {qrModalDevice.device_id}</p>
             <p className="mt-1 font-mono text-xs text-indigo-700">Mã xác thực phần cứng: <span className="font-bold">{qrModalDevice.verify_code || 'Chưa gán'}</span></p>
             <p className="mt-2 text-[10px] text-slate-500 break-all bg-slate-100 p-2 rounded-lg font-mono">
-              {(typeof window !== 'undefined' ? window.location.origin : '') + '/activate?device_id=' + encodeURIComponent(qrModalDevice.device_id) + (qrModalDevice.verify_code ? '&verify_code=' + encodeURIComponent(qrModalDevice.verify_code) : '')}
+              {(typeof window !== 'undefined' ? window.location.origin : '') + '/activate?device_id=' + encodeURIComponent(qrModalDevice.device_id) + (qrModalDevice.verify_code ? '&verify_code=' + encodeURIComponent(qrModalDevice.verify_code) : '') + (accountToken ? '&account_token=' + encodeURIComponent(accountToken) : '')}
             </p>
           </div>
           <p className="mt-3 text-xs text-slate-500">
@@ -235,17 +236,17 @@ function DevicesView({ onMessage }: { onMessage: (message: { text: string; kind:
           <div className="mt-4 flex gap-2">
             <button
               onClick={() => {
-                const url = window.location.origin + '/activate?device_id=' + encodeURIComponent(qrModalDevice.device_id) + (qrModalDevice.verify_code ? '&verify_code=' + encodeURIComponent(qrModalDevice.verify_code) : '');
+                const url = window.location.origin + '/activate?device_id=' + encodeURIComponent(qrModalDevice.device_id) + (qrModalDevice.verify_code ? '&verify_code=' + encodeURIComponent(qrModalDevice.verify_code) : '') + (accountToken ? '&account_token=' + encodeURIComponent(accountToken) : '');
                 navigator.clipboard.writeText(url);
                 onMessage({ text: 'Đã sao chép link kích hoạt của ' + qrModalDevice.device_id + '!', kind: 'success' });
               }}
               className="flex-1 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
             >
-              Sao chép Link
+              Sao chép Link QR
             </button>
             <button
               onClick={() => setQrModalDevice(null)}
-              className="rounded-xl border px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+              className="rounded-xl border px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
             >
               Đóng
             </button>

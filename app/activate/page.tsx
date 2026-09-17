@@ -6,11 +6,14 @@ type School = {
   id: string;
   name: string;
   address?: string;
+  account_token?: string;
 };
 
 export default function ActivatePage() {
   const [deviceId, setDeviceId] = useState('');
   const [verifyCode, setVerifyCode] = useState('');
+  const [accountToken, setAccountToken] = useState('');
+  const [verifiedSchool, setVerifiedSchool] = useState<School | null>(null);
   const [studentName, setStudentName] = useState('');
   const [studentClass, setStudentClass] = useState('');
   const [schoolId, setSchoolId] = useState('');
@@ -21,33 +24,52 @@ export default function ActivatePage() {
   const [error, setError] = useState<string | null>(null);
   const [successData, setSuccessData] = useState<{
     device_id: string;
+    device_token?: string;
+    account_token?: string;
+    api_token_url?: string;
     student_name: string;
     student_class: string;
     school_name: string;
     paired_at: string;
   } | null>(null);
 
-  // Lấy gợi ý device_id từ query parameters (?device_id=XE01)
+  // Lấy gợi ý device_id, verify_code, account_token từ query parameters
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const id = params.get('device_id');
       const verify = params.get('verify_code');
+      const accToken = params.get('account_token') || params.get('token');
+
       if (id) {
         setDeviceId(id.toUpperCase().trim());
       }
       if (verify) {
         setVerifyCode(verify.trim());
       }
+      if (accToken) {
+        const cleanToken = accToken.trim();
+        setAccountToken(cleanToken);
+        // Kiểm tra token tài khoản với máy chủ
+        fetch(`/api/schools?account_token=${encodeURIComponent(cleanToken)}`)
+          .then((res) => res.json())
+          .then((data: any) => {
+            if (data?.success && data?.school) {
+              setVerifiedSchool(data.school);
+              setSchoolId(data.school.id);
+            }
+          })
+          .catch((err) => console.error('Lỗi kiểm tra account token:', err));
+      }
     }
 
-    // Tải danh sách trường học
+    // Tải danh sách trường học (dùng khi không có account_token)
     fetch('/api/schools')
       .then((res) => res.json())
       .then((data: any) => {
         if (data?.schools && Array.isArray(data.schools)) {
           setSchools(data.schools);
-          if (data.schools.length > 0) {
+          if (data.schools.length > 0 && !schoolId) {
             setSchoolId(data.schools[0].id);
           }
         }
@@ -89,6 +111,7 @@ export default function ActivatePage() {
         body: JSON.stringify({
           device_id: deviceId.trim(),
           verify_code: verifyCode.trim(),
+          account_token: accountToken.trim() || undefined,
           school_id: schoolId || undefined,
           student_name: studentName.trim(),
           student_class: studentClass.trim(),
@@ -124,22 +147,38 @@ export default function ActivatePage() {
             XÁC THỰC & GHÉP ĐÔI THIẾT BỊ
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Tự do đặt ID xe và xác thực thiết bị vật lý vào hệ thống nhà trường
+            Xác thực tài khoản nhà trường, liên kết mã xe và tự nạp token vào Flash bo mạch
           </p>
         </div>
 
-        {/* Hướng dẫn quy trình */}
-        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 mb-6 shadow-sm">
-          <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-            Quy trình ghép đôi thiết bị:
-          </p>
-          <ol className="text-xs text-slate-700 space-y-1.5 pl-4 list-decimal">
-            <li><strong>Ấn nút</strong> trên thiết bị vật lý để bật chế độ nhận diện.</li>
-            <li><strong>Quét mã QR</strong> trên thiết bị để mở trang kích hoạt.</li>
-            <li><strong>Đặt mã ID xe theo ý muốn</strong> (tự custom), nhập <strong>mã xác thực phần cứng</strong> (nạp trong code) rồi bấm <strong>Kích hoạt</strong>.</li>
-          </ol>
-        </div>
+        {/* Thông báo đã xác thực Token tài khoản */}
+        {verifiedSchool ? (
+          <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-4 mb-6 shadow-sm flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+                Đã xác thực tài khoản trường học:
+              </p>
+              <p className="text-sm font-bold text-slate-900 mt-0.5">{verifiedSchool.name}</p>
+              <p className="text-[11px] font-mono text-emerald-700 mt-0.5">Token: {verifiedSchool.account_token}</p>
+            </div>
+            <span className="px-3 py-1 bg-emerald-600 text-white text-xs font-bold rounded-xl shadow-sm">
+              Đã khóa trường
+            </span>
+          </div>
+        ) : (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 mb-6 shadow-sm">
+            <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+              Quy trình ghép đôi thiết bị:
+            </p>
+            <ol className="text-xs text-slate-700 space-y-1.5 pl-4 list-decimal">
+              <li><strong>Quét mã QR</strong> trên thiết bị để tự động nhận diện Mã xe, Mã xác thực và Token tài khoản.</li>
+              <li>Nhập <strong>Họ tên và Lớp học</strong> rồi bấm <strong>Kích hoạt</strong>.</li>
+              <li>Bấm nút <strong>BOOT (Pair Button)</strong> trên xe một lần để thiết bị tự nạp Token vào Flash (NVS)!</li>
+            </ol>
+          </div>
+        )}
 
         {/* Màn hình kết quả thành công */}
         {successData ? (
@@ -151,12 +190,12 @@ export default function ActivatePage() {
             </div>
             <h2 className="text-2xl font-black text-slate-800">GHÉP ĐÔI THÀNH CÔNG!</h2>
             <p className="text-sm text-slate-600 mt-2">
-              Thiết bị vật lý đã được nối chính xác với ID xe và hồ sơ học sinh trên hệ thống.
+              Thiết bị đã được liên kết với học sinh và tài khoản trường học.
             </p>
 
             <div className="mt-6 bg-slate-50 rounded-2xl p-4 text-left space-y-2 border border-slate-200 text-sm">
               <div className="flex justify-between">
-                <span className="text-slate-500">Mã ID xe (Custom):</span>
+                <span className="text-slate-500">Mã ID xe:</span>
                 <span className="font-bold text-emerald-700 font-mono">{successData.device_id}</span>
               </div>
               <div className="flex justify-between">
@@ -168,13 +207,46 @@ export default function ActivatePage() {
                 <span className="font-bold text-slate-800">{successData.student_class}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Trường:</span>
+                <span className="text-slate-500">Trường quản lý:</span>
                 <span className="font-bold text-slate-800">{successData.school_name}</span>
               </div>
+              {successData.device_token ? (
+                <div className="flex justify-between items-center pt-1 border-t">
+                  <span className="text-slate-500">Token thiết bị (Hardware):</span>
+                  <span className="font-bold text-indigo-700 font-mono text-xs">{successData.device_token}</span>
+                </div>
+              ) : null}
+              {successData.account_token ? (
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500">Token tài khoản:</span>
+                  <span className="font-bold text-amber-700 font-mono text-xs">{successData.account_token}</span>
+                </div>
+              ) : null}
               <div className="flex justify-between">
                 <span className="text-slate-500">Thời gian kích hoạt:</span>
                 <span className="text-slate-700 text-xs">{new Date(successData.paired_at).toLocaleString('vi-VN')}</span>
               </div>
+            </div>
+
+            {/* Hướng dẫn tự nạp vào Flash cho phần cứng */}
+            <div className="mt-5 p-4 rounded-2xl bg-indigo-50 border border-indigo-200 text-left">
+              <p className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+                <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                Tự động lưu Token vào bộ nhớ Flash của xe:
+              </p>
+              <p className="text-xs text-slate-700 mt-1">
+                Bây giờ bạn chỉ cần <strong>nhấn nút ghép đôi (BOOT)</strong> trên xe một lần. Bo mạch ESP32 sẽ tự động gọi API lấy Token và lưu thẳng vào Flash NVS, sau đó xe sẽ tự động gửi dữ liệu định vị về bảng radar!
+              </p>
+              {successData.api_token_url ? (
+                <div className="mt-2.5 pt-2 border-t border-indigo-200">
+                  <p className="text-[10px] font-semibold text-slate-500 uppercase">Link API cấp token tự động cho thiết bị:</p>
+                  <p className="text-[11px] font-mono text-indigo-800 break-all select-all bg-white p-2 rounded-xl mt-1 border border-indigo-200">
+                    {successData.api_token_url}
+                  </p>
+                </div>
+              ) : null}
             </div>
 
             <div className="mt-6 flex flex-col sm:flex-row gap-3">
@@ -212,6 +284,24 @@ export default function ActivatePage() {
               </div>
             )}
 
+            {/* Token tài khoản trường học */}
+            {accountToken ? (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  🛡️ Token Xác Thực Tài Khoản (Account Token)
+                </label>
+                <input
+                  type="text"
+                  value={accountToken}
+                  readOnly
+                  className="w-full px-4 py-3 rounded-xl border border-emerald-300 font-mono text-emerald-800 bg-emerald-50/50 font-bold focus:outline-none"
+                />
+                <p className="text-[11px] text-emerald-700 mt-1">
+                  Đã tự động xác thực xe này thuộc về tài khoản trường học của bạn.
+                </p>
+              </div>
+            ) : null}
+
             {/* Custom Device ID */}
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -246,16 +336,23 @@ export default function ActivatePage() {
                 className="w-full px-4 py-3 rounded-xl border border-slate-300 font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
               />
               <p className="text-[11px] text-slate-500 mt-1">
-                Mã xác thực là số nguyên từ 1 đến 1.000.000.000 (tối đa 10 chữ số) nạp sẵn trong code firmware.
+                Mã xác thực là số nguyên từ 1 đến 1.000.000.000 nạp sẵn trong code firmware.
               </p>
             </div>
 
             {/* Trường học */}
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                🏫 Trường Học <span className="text-rose-500">*</span>
+                🏫 Trường Học Quản Lý <span className="text-rose-500">*</span>
               </label>
-              {schools.length > 0 ? (
+              {verifiedSchool ? (
+                <input
+                  type="text"
+                  value={verifiedSchool.name}
+                  disabled
+                  className="w-full px-4 py-3 rounded-xl border border-emerald-300 bg-emerald-50/50 text-slate-800 font-bold"
+                />
+              ) : schools.length > 0 ? (
                 <select
                   value={schoolId}
                   onChange={(e) => setSchoolId(e.target.value)}

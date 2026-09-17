@@ -10,6 +10,7 @@ export const schools = sqliteTable('schools', {
   name: text('name').notNull(),
   address: text('address'),
   timezone: text('timezone').notNull().default('Asia/Ho_Chi_Minh'),
+  accountToken: text('account_token'),
   ...timestamps,
 });
 
@@ -48,6 +49,7 @@ export const devices = sqliteTable('devices', {
   deviceId: text('device_id').notNull(),
   deviceName: text('device_name').notNull(),
   deviceTokenHash: text('device_token_hash').notNull(),
+  deviceToken: text('device_token'),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   lastSeen: text('last_seen'),
   lastLatitude: real('last_latitude'),

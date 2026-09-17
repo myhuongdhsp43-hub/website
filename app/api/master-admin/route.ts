@@ -24,10 +24,10 @@ export async function POST(request: Request) {
     if (action === 'GET_DATA') {
       const [devicesRes, usersRes, schoolsRes] = await Promise.all([
         env.DB.prepare(`
-          SELECT d.id, d.device_id, d.device_name, d.verify_code, d.enabled, d.last_seen, d.paired_at,
+          SELECT d.id, d.device_id, d.device_name, d.verify_code, d.device_token, d.enabled, d.last_seen, d.paired_at,
                  d.device_token_hash, d.created_at,
                  s.full_name AS student_name, s.student_code, s.class_name,
-                 sc.name AS school_name, sc.id AS school_id
+                 sc.name AS school_name, sc.id AS school_id, sc.account_token
           FROM devices d
           LEFT JOIN schools sc ON sc.id = d.school_id
           LEFT JOIN students s ON s.id = d.student_id
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
           ORDER BY u.created_at DESC
         `).all(),
         env.DB.prepare(`
-          SELECT id, name, address, created_at FROM schools ORDER BY name ASC
+          SELECT id, name, address, account_token, created_at FROM schools ORDER BY name ASC
         `).all(),
       ]);
 
@@ -113,8 +113,9 @@ export async function POST(request: Request) {
       }
       if (!targetSchoolId) {
         targetSchoolId = crypto.randomUUID();
+        const newAccToken = 'acc_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16);
         const now = new Date().toISOString();
-        await env.DB.prepare('INSERT INTO schools (id, name, timezone, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').bind(targetSchoolId, 'Trường THCS Mặc Định', 'Asia/Ho_Chi_Minh', now, now).run();
+        await env.DB.prepare('INSERT INTO schools (id, name, account_token, timezone, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').bind(targetSchoolId, 'Trường THCS Mặc Định', newAccToken, 'Asia/Ho_Chi_Minh', now, now).run();
       }
 
       const newId = crypto.randomUUID();
@@ -125,9 +126,9 @@ export async function POST(request: Request) {
 
       await env.DB.batch([
         env.DB.prepare(`
-          INSERT INTO devices (id, school_id, device_id, device_name, device_token_hash, verify_code, enabled, gps_valid, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
-        `).bind(newId, targetSchoolId, deviceId, deviceName, tokenHash, verifyCode, now, now),
+          INSERT INTO devices (id, school_id, device_id, device_name, device_token_hash, device_token, verify_code, enabled, gps_valid, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)
+        `).bind(newId, targetSchoolId, deviceId, deviceName, tokenHash, rawToken, verifyCode, now, now),
         env.DB.prepare(`
           INSERT INTO device_configs (id, device_id, speed_limit, speed_alert_enabled, buzzer_enabled, remote_alarm, version, created_at, updated_at)
           VALUES (?, ?, 40, 1, 1, 0, 1, ?, ?)

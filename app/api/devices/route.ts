@@ -5,12 +5,13 @@ import { ApiError, apiError, boundedNumber, json, optionalBoolean, optionalText,
 export async function GET() {
   try {
     const context = await requireSchoolUser();
-    const devices = await env.DB.prepare(`SELECT d.id, d.device_id, d.device_name, d.verify_code, d.student_id, d.enabled, d.last_seen, d.current_speed, d.gps_valid, d.network_signal, d.firmware_version,
+    const schoolRow = await env.DB.prepare('SELECT account_token FROM schools WHERE id = ?').bind(context.schoolId).first<{ account_token: string | null }>();
+    const devices = await env.DB.prepare(`SELECT d.id, d.device_id, d.device_name, d.verify_code, d.device_token, d.student_id, d.enabled, d.last_seen, d.current_speed, d.gps_valid, d.network_signal, d.firmware_version,
       c.speed_limit, c.speed_alert_enabled, c.buzzer_enabled, c.remote_alarm, c.version, s.full_name, s.student_code, s.class_name
       FROM devices d JOIN device_configs c ON c.device_id = d.id
       LEFT JOIN students s ON s.id = d.student_id AND s.school_id = d.school_id
       WHERE d.school_id = ? ORDER BY d.device_id`).bind(context.schoolId).all();
-    return json({ success: true, devices: devices.results });
+    return json({ success: true, account_token: schoolRow?.account_token ?? null, devices: devices.results });
   } catch (error) { return apiError(error); }
 }
 
@@ -42,11 +43,11 @@ export async function POST(request: Request) {
     }
 
     await env.DB.batch([
-      env.DB.prepare('INSERT INTO devices (id, school_id, student_id, device_id, device_name, device_token_hash, verify_code, enabled, gps_valid, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(id, context.schoolId, studentId, deviceId, requiredText(body.device_name, 'Tên thiết bị', 100), await sha256(rawToken), verifyCode, optionalBoolean(body.enabled, true) ? 1 : 0, 0, now, now),
+      env.DB.prepare('INSERT INTO devices (id, school_id, student_id, device_id, device_name, device_token_hash, device_token, verify_code, enabled, gps_valid, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(id, context.schoolId, studentId, deviceId, requiredText(body.device_name, 'Tên thiết bị', 100), await sha256(rawToken), rawToken, verifyCode, optionalBoolean(body.enabled, true) ? 1 : 0, 0, now, now),
       env.DB.prepare('INSERT INTO device_configs (id, device_id, speed_limit, speed_alert_enabled, buzzer_enabled, remote_alarm, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(configId, id, speedLimit, optionalBoolean(body.speed_alert_enabled, true) ? 1 : 0, optionalBoolean(body.buzzer_enabled, true) ? 1 : 0, 0, 1, now, now),
     ]);
     await audit(context, 'device.create', 'device', id, { deviceId });
-    return json({ success: true, device: { id, deviceId, verify_code: verifyCode }, provisioning: { device_token: rawToken, verify_code: verifyCode, note: 'Sao chép token ngay bây giờ; hệ thống chỉ hiển thị token một lần.' } }, { status: 201 });
+    return json({ success: true, device: { id, deviceId, verify_code: verifyCode, device_token: rawToken }, provisioning: { device_token: rawToken, verify_code: verifyCode, note: 'Sao chép token ngay bây giờ; hệ thống chỉ hiển thị token một lần.' } }, { status: 201 });
   } catch (error) { return apiError(error); }
 }
 
