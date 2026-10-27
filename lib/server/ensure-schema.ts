@@ -6,6 +6,7 @@ import m3 from '../../drizzle/0003_school_scoped_device_ids.sql?raw';
 import m4 from '../../drizzle/0004_helmet_safety.sql?raw';
 import m5 from '../../drizzle/0005_device_pairing.sql?raw';
 import m6 from '../../drizzle/0006_account_and_device_tokens.sql?raw';
+import m7 from '../../drizzle/0007_realtime_hardware_sync.sql?raw';
 
 let initialized = false;
 
@@ -17,7 +18,7 @@ export async function ensureSchema() {
     await env.DB.prepare('SELECT 1 FROM users LIMIT 1').first();
     await env.DB.prepare('SELECT 1 FROM app_sessions LIMIT 1').first();
     // Verify columns exist
-    await env.DB.prepare('SELECT verify_code, device_token FROM devices LIMIT 1').first();
+    await env.DB.prepare('SELECT verify_code, device_token, token_synced_at FROM devices LIMIT 1').first();
     await env.DB.prepare('SELECT account_token FROM schools LIMIT 1').first();
 
     // Auto-backfill verify_code
@@ -53,7 +54,7 @@ export async function ensureSchema() {
     // Tables or columns not ready yet, continue to apply migration statements
   }
 
-  const migrations = [m0, m1, m2, m3, m4, m5, m6];
+  const migrations = [m0, m1, m2, m3, m4, m5, m6, m7];
   for (const sqlFile of migrations) {
     const rawStatements = sqlFile.split('--> statement-breakpoint');
     for (const chunk of rawStatements) {

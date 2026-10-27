@@ -116,3 +116,19 @@ test('hardware token endpoint /api/device/token exists and returns device_token 
   assert.match(pairRouteSource, /device_token/);
   assert.match(pairRouteSource, /paired/);
 });
+
+test('activation route strictly requires real-time hardware signal and real-status API checks online state', async () => {
+  const activateSource = await readFile(new URL('../app/api/device/activate/route.ts', import.meta.url), 'utf8');
+  const realStatusSource = await readFile(new URL('../app/api/device/real-status/route.ts', import.meta.url), 'utf8');
+
+  // Activate route rejects offline devices without fresh button press or recent telemetry
+  assert.match(activateSource, /device_offline_or_not_in_pairing_mode/);
+  assert.match(activateSource, /device\.pairing_pending === 1/);
+  assert.match(activateSource, /device\.pairing_requested_at/);
+
+  // Real-status route exists and returns hardware_online and status_label
+  assert.match(realStatusSource, /hardware_online/);
+  assert.match(realStatusSource, /status_label/);
+  assert.match(realStatusSource, /token_synced/);
+  assert.match(realStatusSource, /pairing_pending/);
+});

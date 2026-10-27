@@ -66,7 +66,7 @@ export async function POST(request: Request) {
 
     // Ưu tiên 1: Tìm theo verify_code (mã xác thực phần cứng từ 1 đến 1 tỷ)
     let device = await env.DB.prepare(
-      'SELECT id, school_id, device_id, device_name, verify_code, device_token, pairing_pending, pairing_requested_at, student_id, enabled FROM devices WHERE verify_code = ?'
+      'SELECT id, school_id, device_id, device_name, verify_code, device_token, pairing_pending, pairing_requested_at, student_id, enabled, last_seen FROM devices WHERE verify_code = ?'
     ).bind(verifyCode).first<{
       id: string;
       school_id: string;
@@ -78,12 +78,13 @@ export async function POST(request: Request) {
       pairing_requested_at: string | null;
       student_id: string | null;
       enabled: number;
+      last_seen: string | null;
     }>();
 
     // Ưu tiên 2: Nếu chưa tìm thấy theo verify_code, tìm theo device_id
     if (!device) {
       device = await env.DB.prepare(
-        'SELECT id, school_id, device_id, device_name, verify_code, device_token, pairing_pending, pairing_requested_at, student_id, enabled FROM devices WHERE device_id = ?'
+        'SELECT id, school_id, device_id, device_name, verify_code, device_token, pairing_pending, pairing_requested_at, student_id, enabled, last_seen FROM devices WHERE device_id = ?'
       ).bind(rawDeviceId).first();
     }
 
@@ -119,6 +120,23 @@ export async function POST(request: Request) {
       }
     }
 
+    // 2.5. KIỂM TRA BẮT BUỘC TÍN HIỆU PHẦN CỨNG THỰC TẾ (REAL HARDWARE PAIRING CHECK)
+    // Thiết bị phần cứng phải đang mở nguồn và đã bấm nút BOOT (hoặc gửi dữ liệu 4G gần nhất).
+    // Tuyệt đối không cho phép ghép nối ảo khi thiết bị tắt nguồn hoặc không có thật.
+    const nowMs = Date.now();
+    const requestedAtMs = device.pairing_requested_at ? new Date(device.pairing_requested_at).getTime() : 0;
+    const isPairingFresh = device.pairing_pending === 1 && (nowMs - requestedAtMs < 15 * 60 * 1000);
+    const lastSeenMs = device.last_seen ? new Date(device.last_seen).getTime() : 0;
+    const isRecentlyActive = (nowMs - lastSeenMs < 5 * 60 * 1000);
+
+    if (!isPairingFresh && !isRecentlyActive) {
+      throw new ApiError(
+        400,
+        'Không thể ghép đôi! Thiết bị xe chưa bật nguồn hoặc chưa nhấn nút Ghép đôi (BOOT). Vui lòng bật nguồn bo mạch và nhấn nút BOOT trên xe để truyền tín hiệu thực tế qua 4G trước khi xác nhận!',
+        'device_offline_or_not_in_pairing_mode'
+      );
+    }
+
     // 3. Tạo hồ sơ học sinh
     const studentId = crypto.randomUUID();
     const studentCode = `HS-${studentClass}-${Date.now().toString().slice(-4)}`;
@@ -142,8 +160,9 @@ export async function POST(request: Request) {
     const tokenHash = await sha256(deviceToken);
 
     // 6. Nối thiết bị với học sinh và lưu Custom ID + Verify Code + Token phần cứng + Cập nhật trường học
+    // Đặt pairing_pending = 2 (Đã liên kết trên web, đang chờ bo mạch ESP32 lấy token về Flash)
     await env.DB.prepare(
-      'UPDATE devices SET student_id = ?, school_id = ?, device_id = ?, device_name = ?, device_token = ?, device_token_hash = ?, verify_code = ?, paired_at = ?, pairing_pending = 0, enabled = 1, updated_at = ? WHERE id = ?'
+      'UPDATE devices SET student_id = ?, school_id = ?, device_id = ?, device_name = ?, device_token = ?, device_token_hash = ?, verify_code = ?, paired_at = ?, pairing_pending = 2, enabled = 1, updated_at = ? WHERE id = ?'
     ).bind(studentId, schoolId, rawDeviceId, `Xe của ${studentName} (${studentClass})`, deviceToken, tokenHash, verifyCode, now, now, device.id).run();
 
     const origin = new URL(request.url).origin;

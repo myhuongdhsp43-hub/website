@@ -75,13 +75,18 @@ async function handleGetOrPost(request: Request, isGet: boolean) {
 
     // Trường hợp 2: Thiết bị đã ghép đôi thành công -> Cấp token để bo mạch lưu vào Flash
     let deviceToken = device.device_token;
+    const now = new Date().toISOString();
     if (!deviceToken) {
       deviceToken = createDeviceToken();
       const tokenHash = await sha256(deviceToken);
-      const now = new Date().toISOString();
       await env.DB.prepare(
-        'UPDATE devices SET device_token = ?, device_token_hash = ?, updated_at = ? WHERE id = ?'
-      ).bind(deviceToken, tokenHash, now, device.id).run();
+        'UPDATE devices SET device_token = ?, device_token_hash = ?, token_synced_at = ?, pairing_pending = 0, updated_at = ? WHERE id = ?'
+      ).bind(deviceToken, tokenHash, now, now, device.id).run();
+    } else {
+      // Ghi nhận thiết bị phần cứng đã kết nối và lấy token thành công vào Flash (NVS)
+      await env.DB.prepare(
+        'UPDATE devices SET token_synced_at = ?, pairing_pending = 0, updated_at = ? WHERE id = ?'
+      ).bind(now, now, device.id).run();
     }
 
     return json({

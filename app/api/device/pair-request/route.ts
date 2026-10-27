@@ -42,12 +42,18 @@ export async function POST(request: Request) {
     const isPaired = Boolean(device.student_id);
 
     let deviceToken = device.device_token;
-    if (isPaired && !deviceToken) {
-      deviceToken = createDeviceToken();
-      const tokenHash = await sha256(deviceToken);
-      await env.DB.prepare(
-        'UPDATE devices SET device_token = ?, device_token_hash = ?, updated_at = ? WHERE id = ?'
-      ).bind(deviceToken, tokenHash, now, device.id).run();
+    if (isPaired) {
+      if (!deviceToken) {
+        deviceToken = createDeviceToken();
+        const tokenHash = await sha256(deviceToken);
+        await env.DB.prepare(
+          'UPDATE devices SET device_token = ?, device_token_hash = ?, token_synced_at = ?, pairing_pending = 0, updated_at = ? WHERE id = ?'
+        ).bind(deviceToken, tokenHash, now, now, device.id).run();
+      } else {
+        await env.DB.prepare(
+          'UPDATE devices SET token_synced_at = ?, pairing_pending = 0, updated_at = ? WHERE id = ?'
+        ).bind(now, now, device.id).run();
+      }
     }
 
     return json({
