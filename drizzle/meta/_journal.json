@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788956879346,
+      "tag": "0000_fantastic_bishop",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788956994286,
+      "tag": "0001_dizzy_the_captain",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792079351580,
+      "tag": "0002_password_admin_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792079351581,
+      "tag": "0003_school_scoped_device_ids",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792079351582,
+      "tag": "0004_helmet_safety",
+      "breakpoints": true
+    }
+  ]
+}

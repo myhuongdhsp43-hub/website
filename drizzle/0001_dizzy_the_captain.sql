@@ -1,0 +1,1 @@
+ALTER TABLE `devices` ADD `active_overspeed_event_id` text;
