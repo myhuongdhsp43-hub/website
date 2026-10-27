@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { apiError, json } from '@/lib/server/http';
+import { ApiError, apiError, json } from '@/lib/server/http';
 import { ensureSchema } from '@/lib/server/ensure-schema';
 
 export async function GET(request: Request) {
@@ -10,11 +10,7 @@ export async function GET(request: Request) {
     const verifyCode = (url.searchParams.get('verify_code') || '').trim();
 
     if (!rawDeviceId && !verifyCode) {
-      return json({
-        success: false,
-        error: 'missing_params',
-        message: 'Cần cung cấp device_id hoặc verify_code từ mã QR của thiết bị.',
-      }, 400);
+      throw new ApiError(400, 'Cần cung cấp device_id hoặc verify_code từ mã QR của thiết bị.', 'missing_params');
     }
 
     // Tìm thiết bị trong DB
@@ -62,20 +58,12 @@ export async function GET(request: Request) {
     }
 
     if (!device) {
-      return json({
-        success: false,
-        error: 'device_not_found',
-        message: 'Thiết bị không tồn tại trong hệ thống! Hãy kiểm tra lại mã QR trên xe hoặc liên hệ quản trị viên.',
-      }, 404);
+      throw new ApiError(404, 'Thiết bị không tồn tại trong hệ thống! Hãy kiểm tra lại mã QR trên xe hoặc liên hệ quản trị viên.', 'device_not_found');
     }
 
     // Nếu người dùng gửi verifyCode nhưng không khớp với thiết bị
     if (verifyCode && device.verify_code && device.verify_code.trim() !== verifyCode) {
-      return json({
-        success: false,
-        error: 'invalid_verify_code',
-        message: 'Mã xác thực phần cứng không khớp với bo mạch của xe này.',
-      }, 401);
+      throw new ApiError(401, 'Mã xác thực phần cứng không khớp với bo mạch của xe này.', 'invalid_verify_code');
     }
 
     const nowMs = Date.now();
