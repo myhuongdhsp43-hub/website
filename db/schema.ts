@@ -65,6 +65,10 @@ export const devices = sqliteTable('devices', {
   helmetMissingSince: text('helmet_missing_since'),
   helmetAlertSentAt: text('helmet_alert_sent_at'),
   helmetAlertActive: integer('helmet_alert_active', { mode: 'boolean' }).notNull().default(false),
+  verifyCode: text('verify_code'),
+  pairingPending: integer('pairing_pending', { mode: 'boolean' }).notNull().default(false),
+  pairingRequestedAt: text('pairing_requested_at'),
+  pairedAt: text('paired_at'),
   ...timestamps,
 }, (table) => [uniqueIndex('uq_devices_school_device_id').on(table.schoolId, table.deviceId), index('idx_devices_school_seen').on(table.schoolId, table.lastSeen), index('idx_devices_student_id').on(table.studentId)]);
 

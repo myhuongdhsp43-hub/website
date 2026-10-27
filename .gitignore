@@ -37,3 +37,7 @@ next-env.d.ts
 /outputs/
 /work/
 /.sites-runtime/
+
+# typescript build info
+*.tsbuildinfo
+

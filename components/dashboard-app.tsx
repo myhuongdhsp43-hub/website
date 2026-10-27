@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { BarChart3, Bell, Bike, Check, ChevronRight, CircleGauge, History, LoaderCircle, LogOut, MapPinned, Plus, RadioTower, Settings, ShieldCheck, Trash2, TriangleAlert, UserRound, Users, WifiOff, X } from 'lucide-react';
+import { BarChart3, Bell, Bike, Check, ChevronRight, CircleGauge, History, QrCode, LoaderCircle, LogOut, MapPinned, Plus, RadioTower, Settings, ShieldCheck, Trash2, TriangleAlert, UserRound, Users, WifiOff, X } from 'lucide-react';
 import { DeviceMap, type DeviceMarker, type TrailPoint } from './device-map';
 import { HelmetSmsPanel } from './helmet-sms-panel';
 
@@ -188,6 +188,7 @@ function DevicesView({ onMessage }: { onMessage: (message: { text: string; kind:
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Device | null>(null);
   const [provisioning, setProvisioning] = useState<string | null>(null);
+  const [qrModalDevice, setQrModalDevice] = useState<Device | null>(null);
   const [reload, setReload] = useState(0);
   const refresh = () => setReload((value) => value + 1);
   useEffect(() => { void Promise.all([api<{ devices: Device[] }>('/api/devices'), api<{ students: Student[] }>('/api/students')]).then(([dev, stu]) => { setDevices(dev.devices); setStudents(stu.students); }).catch((error) => onMessage({ text: getError(error), kind: 'error' })); }, [reload, onMessage]);
@@ -206,7 +207,51 @@ function DevicesView({ onMessage }: { onMessage: (message: { text: string; kind:
     {showForm ? <DeviceForm students={students} onClose={() => setShowForm(false)} onDone={(token) => { setShowForm(false); setProvisioning(token ?? null); refresh(); }} onMessage={onMessage} /> : null}
     {editing ? <DeviceForm device={editing} students={students} onClose={() => setEditing(null)} onDone={() => { setEditing(null); refresh(); onMessage({ text: 'Đã gửi cấu hình mới cho thiết bị.', kind: 'success' }); }} onMessage={onMessage} /> : null}
     {provisioning ? <Notice text={`Token thiết bị: ${provisioning}. Hãy lưu ngay vào DEVICE_TOKEN của firmware; token này sẽ không hiển thị lại.`} kind="success" onClose={() => setProvisioning(null)} /> : null}
-    <div className="grid gap-4 xl:grid-cols-2">{devices.length ? devices.map((device) => <article key={device.id} className="rounded-2xl border bg-card p-5 shadow-sm"><div className="flex items-start justify-between gap-4"><div><p className="text-lg font-bold">{device.device_id}</p><p className="text-sm text-muted-foreground">{device.device_name} · {device.full_name ?? 'Chưa gán học sinh'}</p></div><StatusBadge online={Boolean(device.enabled)} over={Boolean(device.current_speed && device.current_speed > device.speed_limit)} /></div><dl className="mt-5 grid grid-cols-3 gap-3 rounded-xl bg-muted/50 p-3 text-center"><div><dt className="text-xs text-muted-foreground">Tốc độ</dt><dd className="font-bold">{formatSpeed(device.current_speed)}</dd></div><div><dt className="text-xs text-muted-foreground">Giới hạn</dt><dd className="font-bold">{device.speed_limit} km/h</dd></div><div><dt className="text-xs text-muted-foreground">Cấu hình</dt><dd className="font-bold">v{device.version}</dd></div></dl><div className="mt-4 flex flex-wrap gap-2 text-xs"><span className="rounded bg-blue-50 px-2 py-1 text-blue-800">Cảnh báo: {device.speed_alert_enabled ? 'Bật' : 'Tắt'}</span><span className="rounded bg-blue-50 px-2 py-1 text-blue-800">Còi: {device.buzzer_enabled ? 'Bật' : 'Tắt'}</span></div><div className="mt-4 grid grid-cols-3 gap-2"><button onClick={() => setEditing(device)} className="rounded-lg border px-3 py-2 text-sm font-semibold hover:bg-muted">Cấu hình</button><button onClick={() => void remoteAlarm(device.id)} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100">Phát cảnh báo</button><button onClick={() => void deleteDevice(device)} className="inline-flex items-center justify-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-100"><Trash2 className="h-4 w-4" />Xóa</button></div></article>) : <Empty title="Chưa có thiết bị" detail="Tạo XE001, lưu token provisioning trong firmware rồi bắt đầu gửi telemetry." />}</div>
+    <div className="grid gap-4 xl:grid-cols-2">{devices.length ? devices.map((device) => <article key={device.id} className="rounded-2xl border bg-card p-5 shadow-sm"><div className="flex items-start justify-between gap-4"><div><p className="text-lg font-bold">{device.device_id}</p><p className="text-sm text-muted-foreground">{device.device_name} · {device.full_name ?? 'Chưa gán học sinh'}</p></div><StatusBadge online={Boolean(device.enabled)} over={Boolean(device.current_speed && device.current_speed > device.speed_limit)} /></div><dl className="mt-5 grid grid-cols-3 gap-3 rounded-xl bg-muted/50 p-3 text-center"><div><dt className="text-xs text-muted-foreground">Tốc độ</dt><dd className="font-bold">{formatSpeed(device.current_speed)}</dd></div><div><dt className="text-xs text-muted-foreground">Giới hạn</dt><dd className="font-bold">{device.speed_limit} km/h</dd></div><div><dt className="text-xs text-muted-foreground">Cấu hình</dt><dd className="font-bold">v{device.version}</dd></div></dl><div className="mt-4 flex flex-wrap gap-2 text-xs"><span className="rounded bg-blue-50 px-2 py-1 text-blue-800">Cảnh báo: {device.speed_alert_enabled ? 'Bật' : 'Tắt'}</span><span className="rounded bg-blue-50 px-2 py-1 text-blue-800">Còi: {device.buzzer_enabled ? 'Bật' : 'Tắt'}</span></div><div className="mt-4 grid grid-cols-4 gap-2"><button onClick={() => setEditing(device)} className="rounded-lg border px-3 py-2 text-sm font-semibold hover:bg-muted">Cấu hình</button><button onClick={() => setQrModalDevice(device)} className="rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 flex items-center justify-center gap-1"><QrCode className="h-4 w-4" />Mã QR</button><button onClick={() => void remoteAlarm(device.id)} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100">Phát cảnh báo</button><button onClick={() => void deleteDevice(device)} className="inline-flex items-center justify-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-100"><Trash2 className="h-4 w-4" />Xóa</button></div></article>) : <Empty title="Chưa có thiết bị" detail="Tạo XE001, lưu token provisioning trong firmware rồi bắt đầu gửi telemetry." />}</div>
+    {qrModalDevice ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+        <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl border text-center">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="font-bold text-lg text-slate-800">Mã QR: {qrModalDevice.device_id}</h3>
+            <button onClick={() => setQrModalDevice(null)} className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="p-4 bg-slate-50 rounded-2xl border flex flex-col items-center">
+            <img
+              src={'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(typeof window !== 'undefined' ? (window.location.origin + '/activate?device_id=' + qrModalDevice.device_id) : ('https://antoanxe.edu.vn/activate?device_id=' + qrModalDevice.device_id))}
+              alt={'QR Code ' + qrModalDevice.device_id}
+              className="w-48 h-48 rounded-lg shadow-sm bg-white p-2"
+            />
+            <p className="mt-3 font-mono font-bold text-sm text-emerald-700">{qrModalDevice.device_id}</p>
+            <p className="mt-1 text-xs text-slate-500 break-all">
+              {typeof window !== 'undefined' ? (window.location.origin + '/activate?device_id=' + qrModalDevice.device_id) : ('/activate?device_id=' + qrModalDevice.device_id)}
+            </p>
+          </div>
+          <p className="mt-3 text-xs text-slate-500">
+            In mã QR này dán lên thiết bị rời. Học sinh ấn nút rồi quét mã QR để kích hoạt xe vào trường.
+          </p>
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={() => {
+                const url = window.location.origin + '/activate?device_id=' + qrModalDevice.device_id;
+                navigator.clipboard.writeText(url);
+                onMessage({ text: 'Đã sao chép link kích hoạt của ' + qrModalDevice.device_id + '!', kind: 'success' });
+              }}
+              className="flex-1 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+            >
+              Sao chép Link
+            </button>
+            <button
+              onClick={() => setQrModalDevice(null)}
+              className="rounded-xl border px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+            >
+              Đóng
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null}
   </div>;
 }
 
