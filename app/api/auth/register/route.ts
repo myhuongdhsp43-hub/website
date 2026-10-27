@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { env } from 'cloudflare:workers';
 import { createSession, hashPassword, sessionCookie } from '@/lib/server/password-auth';
+import { ensureSchema } from '@/lib/server/ensure-schema';
 
 export async function POST(request: Request) {
   let form: FormData; try { form = await request.formData(); } catch { return redirect(request, 'Biểu mẫu không hợp lệ.'); }
@@ -8,6 +9,7 @@ export async function POST(request: Request) {
   if (schoolName.length < 2 || schoolName.length > 160 || !/^[a-z0-9_.-]{3,64}$/.test(username) || email.length > 160 || !/^\S+@\S+\.\S+$/.test(email) || password.length < 8 || password.length > 200) return redirect(request, 'Thông tin chưa hợp lệ. Tên đăng nhập chỉ gồm chữ không dấu, số, dấu chấm, gạch dưới hoặc gạch ngang; mật khẩu cần ít nhất 8 ký tự.');
   const schoolId = crypto.randomUUID(); const userId = crypto.randomUUID(); const now = new Date().toISOString(); const salt = randomToken();
   try {
+    await ensureSchema();
     const exists = await env.DB.prepare('SELECT id FROM users WHERE username = ? OR lower(email) = ? LIMIT 1').bind(username, email).first();
     if (exists) return redirect(request, 'Tên đăng nhập hoặc email đã được sử dụng.');
     const passwordHash = await hashPassword(password, salt);

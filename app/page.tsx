@@ -1,5 +1,3 @@
-import Link from 'next/link';
-
 export default function Home() {
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
@@ -12,8 +10,8 @@ export default function Home() {
           </div>
         </div>
         <nav aria-label="Tài khoản" className="flex flex-wrap gap-2">
-          <Link href="/login" className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Đăng nhập quản trị</Link>
-          <Link href="/register" className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-emerald-700 bg-white px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Tạo tài khoản</Link>
+          <a href="/login" className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Đăng nhập quản trị</a>
+          <a href="/register" className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border border-emerald-700 bg-white px-4 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Tạo tài khoản</a>
         </nav>
       </header>
 
@@ -23,8 +21,8 @@ export default function Home() {
           <h1 className="max-w-3xl text-4xl font-bold leading-tight tracking-tight md:text-5xl">Xây dựng thói quen tham gia giao thông an toàn.</h1>
           <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-600">Hệ thống cảnh báo sớm tốc độ xe máy điện, giúp nhà trường phối hợp cùng gia đình nhắc nhở học sinh đúng lúc và tôn trọng quyền riêng tư.</p>
           <div className="mt-8 flex flex-wrap gap-3">
-            <Link href="/register" className="inline-flex min-h-12 cursor-pointer items-center justify-center rounded-lg bg-emerald-700 px-5 py-3 font-semibold text-white hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Tạo tài khoản quản trị</Link>
-            <Link href="/register" className="inline-flex min-h-12 cursor-pointer items-center justify-center rounded-lg border border-emerald-700 bg-white px-5 py-3 font-semibold text-emerald-800 hover:bg-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Tạo tài khoản mới</Link>
+            <a href="/register" className="inline-flex min-h-12 cursor-pointer items-center justify-center rounded-lg bg-emerald-700 px-5 py-3 font-semibold text-white hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Tạo tài khoản quản trị</a>
+            <a href="/register" className="inline-flex min-h-12 cursor-pointer items-center justify-center rounded-lg border border-emerald-700 bg-white px-5 py-3 font-semibold text-emerald-800 hover:bg-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">Tạo tài khoản mới</a>
             <a href="#nguyen-tac" className="inline-flex min-h-12 cursor-pointer items-center justify-center rounded-lg border border-slate-300 bg-white px-5 py-3 font-semibold hover:bg-slate-100">Nguyên tắc hoạt động</a>
           </div>
         </div>
