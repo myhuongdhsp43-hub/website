@@ -11,6 +11,7 @@ export const schools = sqliteTable('schools', {
   address: text('address'),
   timezone: text('timezone').notNull().default('Asia/Ho_Chi_Minh'),
   accountToken: text('account_token'),
+  accountType: text('account_type', { enum: ['school', 'personal'] }).notNull().default('school'),
   ...timestamps,
 });
 
@@ -50,6 +51,7 @@ export const devices = sqliteTable('devices', {
   deviceName: text('device_name').notNull(),
   deviceTokenHash: text('device_token_hash').notNull(),
   deviceToken: text('device_token'),
+  apiUrl: text('api_url'),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   lastSeen: text('last_seen'),
   lastLatitude: real('last_latitude'),
@@ -71,6 +73,7 @@ export const devices = sqliteTable('devices', {
   pairingPending: integer('pairing_pending', { mode: 'boolean' }).notNull().default(false),
   pairingRequestedAt: text('pairing_requested_at'),
   pairedAt: text('paired_at'),
+  tokenSyncedAt: text('token_synced_at'),
   ...timestamps,
 }, (table) => [uniqueIndex('uq_devices_school_device_id').on(table.schoolId, table.deviceId), index('idx_devices_school_seen').on(table.schoolId, table.lastSeen), index('idx_devices_student_id').on(table.studentId)]);
 
@@ -205,3 +208,19 @@ export const deviceRequestLimits = sqliteTable('device_request_limits', {
   requestCount: integer('request_count').notNull().default(0),
   updatedAt: text('updated_at').notNull(),
 });
+
+export const studentAccounts = sqliteTable('student_accounts', {
+  id: text('id').primaryKey(),
+  schoolId: text('school_id').notNull().references(() => schools.id),
+  studentId: text('student_id').references(() => students.id),
+  username: text('username').notNull(),
+  passwordHash: text('password_hash').notNull(),
+  passwordSalt: text('password_salt').notNull(),
+  fullName: text('full_name').notNull(),
+  className: text('class_name').notNull(),
+  active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex('uq_student_accounts_school_username').on(table.schoolId, table.username),
+  index('idx_student_accounts_school_id').on(table.schoolId),
+]);

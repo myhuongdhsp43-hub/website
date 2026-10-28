@@ -63,3 +63,13 @@ export function noStore(response: NextResponse) {
   response.headers.set('Cache-Control', 'no-store, max-age=0');
   return response;
 }
+
+export function safeReturnTo(value?: string | null): string {
+  if (!value || !value.startsWith('/') || value.startsWith('//') || value.startsWith('/\\')) return '/admin';
+  try {
+    const url = new URL(value, 'https://local.invalid');
+    return url.origin === 'https://local.invalid' ? `${url.pathname}${url.search}${url.hash}` : '/admin';
+  } catch {
+    return '/admin';
+  }
+}

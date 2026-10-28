@@ -1,12 +1,44 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import {
+  Wifi,
+  Bluetooth,
+  ShieldCheck,
+  CheckCircle2,
+  AlertTriangle,
+  Radio,
+  Lock,
+  ArrowRight,
+  UserCheck,
+  RefreshCw,
+  Copy,
+  Check,
+  LogIn,
+  School as SchoolIcon,
+  User as UserIcon,
+  Cpu,
+  KeyRound,
+  ExternalLink,
+} from 'lucide-react';
 
 type School = {
   id: string;
   name: string;
   address?: string;
   account_token?: string;
+};
+
+type AuthUser = {
+  id: string;
+  displayName: string;
+  fullName: string | null;
+  username: string | null;
+  email: string;
+  role: string;
+  schoolId: string | null;
+  schoolName: string | null;
+  accountType: 'school' | 'personal';
 };
 
 type HardwareRealStatus = {
@@ -25,7 +57,20 @@ type HardwareRealStatus = {
   schoolName?: string | null;
 };
 
+// Bluetooth BLE UUIDs đồng bộ với firmware ESP32-C3
+const BLE_SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+const BLE_CHAR_READ_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+const BLE_CHAR_WRITE_UUID = 'cba1d466-344c-4be3-ab3f-189f80dd7518';
+
 export default function ActivatePage() {
+  // Auth state
+  const [authChecking, setAuthChecking] = useState(true);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+
+  // Pairing mode: 'wifi_4g' vs 'bluetooth'
+  const [pairingMode, setPairingMode] = useState<'wifi_4g' | 'bluetooth'>('wifi_4g');
+
+  // Input states
   const [deviceId, setDeviceId] = useState('');
   const [verifyCode, setVerifyCode] = useState('');
   const [accountToken, setAccountToken] = useState('');
@@ -38,9 +83,20 @@ export default function ActivatePage() {
   const [parentPhone, setParentPhone] = useState('');
   const [schools, setSchools] = useState<School[]>([]);
 
+  // Bluetooth state
+  const [bleDevice, setBleDevice] = useState<any>(null);
+  const [bleServer, setBleServer] = useState<any>(null);
+  const [bleConnecting, setBleConnecting] = useState(false);
+  const [bleConnected, setBleConnected] = useState(false);
+  const [bleError, setBleError] = useState<string | null>(null);
+  const [bleWriteChar, setBleWriteChar] = useState<any>(null);
+
+  // Hardware Status state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checkingHardware, setCheckingHardware] = useState(false);
+  const [copiedToken, setCopiedToken] = useState(false);
+  const [copiedApiUrl, setCopiedApiUrl] = useState(false);
 
   const [hardwareStatus, setHardwareStatus] = useState<HardwareRealStatus>({
     checked: false,
@@ -58,15 +114,35 @@ export default function ActivatePage() {
     device_token?: string;
     account_token?: string;
     api_token_url?: string;
+    telemetry_url?: string;
     student_name: string;
     student_class: string;
     school_name: string;
     paired_at: string;
+    viaBluetooth?: boolean;
   } | null>(null);
 
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 1. Lấy thông tin từ QR Code trên URL
+  // 1. Kiểm tra trạng thái đăng nhập người dùng
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then((res) => res.json())
+      .then((data: any) => {
+        if (data?.authenticated && data?.user) {
+          setCurrentUser(data.user);
+          if (data.user.schoolId) {
+            setSchoolId(data.user.schoolId);
+          }
+        } else {
+          setCurrentUser(null);
+        }
+      })
+      .catch(() => setCurrentUser(null))
+      .finally(() => setAuthChecking(false));
+  }, []);
+
+  // 2. Lấy thông tin từ QR Code trên URL
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -90,7 +166,6 @@ export default function ActivatePage() {
       if (accToken) {
         const cleanToken = accToken.trim();
         setAccountToken(cleanToken);
-        // Kiểm tra token tài khoản với máy chủ
         fetch(`/api/schools?account_token=${encodeURIComponent(cleanToken)}`)
           .then((res) => res.json())
           .then((data: any) => {
@@ -103,7 +178,7 @@ export default function ActivatePage() {
       }
     }
 
-    // Tải danh sách trường học (dùng khi không có account_token)
+    // Tải danh sách trường học
     fetch('/api/schools')
       .then((res) => res.json())
       .then((data: any) => {
@@ -117,7 +192,7 @@ export default function ActivatePage() {
       .catch((err) => console.error('Lỗi tải danh sách trường:', err));
   }, []);
 
-  // 2. Hàm kiểm tra tín hiệu thực tế của phần cứng xe qua API real-status
+  // 3. Kiểm tra tín hiệu thực tế của phần cứng xe qua API real-status (chế độ WiFi/4G)
   const checkRealHardwareStatus = async (targetId: string, targetVerify: string) => {
     if (!targetId && !targetVerify) return;
     setCheckingHardware(true);
@@ -132,7 +207,9 @@ export default function ActivatePage() {
       if (data?.success && data?.device) {
         const dev = data.device;
         const isOnline = Boolean(dev.hardware_online);
-        const isReady = dev.pairing_pending === 1 || Boolean(dev.seconds_since_button_press !== null && dev.seconds_since_button_press < 900);
+        const isReady =
+          dev.pairing_pending === 1 ||
+          Boolean(dev.seconds_since_button_press !== null && dev.seconds_since_button_press < 900);
         const isSynced = Boolean(dev.token_synced);
 
         setHardwareStatus({
@@ -151,7 +228,6 @@ export default function ActivatePage() {
           schoolName: dev.school_name,
         });
 
-        // Nếu đang trong trạng thái chờ thiết bị tải token về Flash và nhận thấy token đã sync
         if (waitingTokenSync && (isSynced || dev.token_synced_at)) {
           setWaitingTokenSync(false);
         }
@@ -173,14 +249,12 @@ export default function ActivatePage() {
     }
   };
 
-  // 3. Tự động kiểm tra và Polling trạng thái thiết bị mỗi 3 giây
+  // Polling trạng thái thiết bị mỗi 3 giây trong chế độ 4G
   useEffect(() => {
-    if (!deviceId && !verifyCode) return;
+    if (pairingMode !== 'wifi_4g' || (!deviceId && !verifyCode)) return;
 
-    // Kiểm tra ngay lập tức
     checkRealHardwareStatus(deviceId, verifyCode);
 
-    // Bắt đầu vòng lặp polling mỗi 3 giây
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     pollTimerRef.current = setInterval(() => {
       checkRealHardwareStatus(deviceId, verifyCode);
@@ -189,29 +263,105 @@ export default function ActivatePage() {
     return () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
-  }, [deviceId, verifyCode, waitingTokenSync]);
+  }, [deviceId, verifyCode, waitingTokenSync, pairingMode]);
 
-  // 4. Xử lý gửi Form kích hoạt
+  // 4. Kết nối Web Bluetooth API với ESP32
+  const handleConnectBluetooth = async () => {
+    setBleError(null);
+    if (typeof navigator === 'undefined' || !(navigator as any).bluetooth) {
+      setBleError(
+        'Trình duyệt này không hỗ trợ Web Bluetooth API. Vui lòng mở trang này trên Google Chrome (Android, Windows, macOS, Linux) hoặc Microsoft Edge.'
+      );
+      return;
+    }
+
+    setBleConnecting(true);
+    try {
+      // Tìm thiết bị có tên bắt đầu bằng "TDM2421" hoặc chứa service UUID
+      const device = await (navigator as any).bluetooth.requestDevice({
+        filters: [{ namePrefix: 'TDM2421' }],
+        optionalServices: [BLE_SERVICE_UUID],
+      });
+
+      setBleDevice(device);
+
+      const server = await device.gatt.connect();
+      setBleServer(server);
+
+      const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+
+      // Đọc Characteristic chứa Device ID & Verify Code
+      try {
+        const readChar = await service.getCharacteristic(BLE_CHAR_READ_UUID);
+        const value = await readChar.readValue();
+        const decoder = new TextDecoder('utf-8');
+        const jsonStr = decoder.decode(value);
+        const parsed = JSON.parse(jsonStr);
+
+        if (parsed.device_id) {
+          setDeviceId(parsed.device_id);
+        }
+        if (parsed.verify_code) {
+          setVerifyCode(String(parsed.verify_code));
+        }
+      } catch (readErr) {
+        console.warn('Không đọc được JSON từ characteristic, dùng ID từ tên thiết bị:', readErr);
+        if (device.name && device.name.includes('-')) {
+          const parts = device.name.split('-');
+          if (parts[1]) setDeviceId(parts[1].trim());
+        }
+      }
+
+      // Lấy Characteristic ghi để đẩy Token & URL xuống Flash
+      try {
+        const writeChar = await service.getCharacteristic(BLE_CHAR_WRITE_UUID);
+        setBleWriteChar(writeChar);
+      } catch (writeErr) {
+        console.warn('Chưa tìm thấy characteristic ghi config:', writeErr);
+      }
+
+      setBleConnected(true);
+      setError(null);
+    } catch (err: any) {
+      if (err.name !== 'NotFoundError') {
+        setBleError(err.message || 'Không thể kết nối Bluetooth tới thiết bị xe.');
+      }
+    } finally {
+      setBleConnecting(false);
+    }
+  };
+
+  // 5. Gửi Form kích hoạt
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
+    if (!currentUser) {
+      setError('Vui lòng đăng nhập tài khoản trước khi ghép nối.');
+      return;
+    }
     if (!deviceId.trim()) {
-      setError('Thiếu mã ID xe từ mã QR.');
+      setError('Thiếu mã ID xe.');
       return;
     }
     if (!verifyCode.trim()) {
-      setError('Thiếu mã xác thực phần cứng từ mã QR.');
+      setError('Thiếu mã xác thực phần cứng (verify code).');
       return;
     }
-    if (!/^[0-9]{1,10}$/.test(verifyCode.trim()) || BigInt(verifyCode.trim()) < 1n || BigInt(verifyCode.trim()) > 1000000000n) {
+    if (
+      !/^[0-9]{1,10}$/.test(verifyCode.trim()) ||
+      BigInt(verifyCode.trim()) < 1n ||
+      BigInt(verifyCode.trim()) > 1000000000n
+    ) {
       setError('Mã xác thực phần cứng phải là số nguyên từ 1 đến 1.000.000.000.');
       return;
     }
 
-    // KIỂM TRA PHẦN CỨNG THẬT TRƯỚC KHI GỬI
-    if (!hardwareStatus.pairingReady && !hardwareStatus.online) {
-      setError('Không thể ghép đôi! Thiết bị xe chưa bật nguồn hoặc chưa bấm nút Ghép đôi (BOOT). Hãy cấp nguồn cho xe và nhấn nút BOOT để xe gửi tín hiệu thật qua 4G.');
+    // Nếu ở chế độ 4G, yêu cầu thiết bị phải online hoặc đã bấm nút
+    if (pairingMode === 'wifi_4g' && !hardwareStatus.pairingReady && !hardwareStatus.online) {
+      setError(
+        'Không thể ghép đôi! Thiết bị xe chưa bật nguồn hoặc chưa bấm nút Ghép đôi (BOOT). Hãy cấp nguồn cho xe và nhấn nút BOOT để xe gửi tín hiệu thực tế qua 4G.'
+      );
       return;
     }
 
@@ -234,238 +384,158 @@ export default function ActivatePage() {
           device_id: deviceId.trim(),
           verify_code: verifyCode.trim(),
           account_token: accountToken.trim() || undefined,
-          school_id: schoolId || undefined,
+          school_id: schoolId || currentUser?.schoolId || undefined,
           student_name: studentName.trim(),
           student_class: studentClass.trim(),
           parent_phone: parentPhone.trim() || undefined,
+          pairing_mode: pairingMode,
         }),
       });
 
       const resData = await response.json();
 
       if (!response.ok || !resData.success) {
-        throw new Error(resData?.error?.message || resData?.message || 'Kích hoạt thất bại. Thiết bị chưa phát tín hiệu thực tế.');
+        throw new Error(
+          resData?.error?.message || resData?.message || 'Kích hoạt thất bại. Mã xác thực phần cứng không khớp!'
+        );
       }
 
-      setSuccessData(resData.data);
-      setWaitingTokenSync(true); // Bắt đầu chờ bo mạch tải token về Flash
+      const returnedData = resData.data;
+
+      // NẾU GHÉP NỐI QUA BLUETOOTH -> GHI TRỰC TIẾP TOKEN VÀ TELEMETRY_URL XUỐNG ESP32 FLASH
+      let wroteBle = false;
+      if (pairingMode === 'bluetooth' && bleWriteChar) {
+        try {
+          const payload = JSON.stringify({
+            device_token: returnedData.device_token,
+            telemetry_url: returnedData.telemetry_url,
+            paired: true,
+          });
+          const encoder = new TextEncoder();
+          await bleWriteChar.writeValue(encoder.encode(payload));
+          wroteBle = true;
+        } catch (bleWriteError) {
+          console.warn('Không ghi được qua BLE, thiết bị vẫn có thể sync qua 4G:', bleWriteError);
+        }
+      }
+
+      setSuccessData({
+        ...returnedData,
+        viaBluetooth: wroteBle,
+      });
+
+      if (!wroteBle) {
+        setWaitingTokenSync(true);
+      }
     } catch (err: any) {
-      setError(err.message || 'Có lỗi xảy ra khi kích hoạt thiết bị.');
+      setError(err.message || 'Lỗi xử lý kích hoạt thiết bị.');
     } finally {
       setLoading(false);
     }
   };
 
+  const currentUrl = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '/activate';
+
   return (
-    <main className="min-h-screen bg-slate-100 py-10 px-4 sm:px-6">
-      <div className="max-w-xl mx-auto">
+    <main className="min-h-screen bg-slate-50 px-4 py-8">
+      <div className="mx-auto max-w-xl">
         {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-emerald-600 text-white shadow-lg mb-3">
-            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-            </svg>
+        <div className="mb-6 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-700 text-white shadow-md">
+              <ShieldCheck className="h-7 w-7" />
+            </span>
+            <div>
+              <h1 className="text-xl font-bold text-slate-900 sm:text-2xl">Ghép đôi & Kích hoạt xe</h1>
+              <p className="text-xs text-slate-500">Hệ thống an toàn xe điện học sinh 2026</p>
+            </div>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800 tracking-tight">
-            GHÉP ĐÔI THIẾT BỊ XE HỌC SINH
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Quét mã QR trên xe ➔ Tự nhận diện thiết bị ➔ Kiểm tra tín hiệu 4G thực tế
-          </p>
+          <a href="/admin" className="text-xs font-semibold text-emerald-700 hover:underline">
+            Vào Dashboard →
+          </a>
         </div>
 
-        {/* THÔNG BÁO TỰ NHẬN DIỆN TỪ QR CODE */}
-        {isFromQR ? (
-          <div className="bg-emerald-500/10 border-2 border-emerald-500/30 rounded-2xl p-4 mb-6 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="flex h-3 w-3 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                </span>
-                <span className="text-xs font-bold text-emerald-900 uppercase tracking-wider">
-                  Đã tự động nhận diện từ mã QR xe
-                </span>
-              </div>
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-600 text-[11px] font-bold text-white shadow-xs">
-                Mã QR Hợp Lệ
+        {/* BẮT BUỘC: Kiểm tra trạng thái Đăng nhập */}
+        {authChecking ? (
+          <div className="mb-6 rounded-2xl border bg-white p-5 text-center text-sm text-slate-500 shadow-sm">
+            <RefreshCw className="mx-auto mb-2 h-5 w-5 animate-spin text-emerald-600" />
+            Đang kiểm tra tài khoản đăng nhập...
+          </div>
+        ) : !currentUser ? (
+          <div className="mb-6 overflow-hidden rounded-3xl border border-amber-300 bg-amber-50/90 p-6 shadow-md">
+            <div className="flex items-start gap-4">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-500 text-white">
+                <Lock className="h-5 w-5" />
               </span>
-            </div>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-              <div className="bg-white/80 p-2.5 rounded-xl border border-emerald-200">
-                <span className="text-slate-500 block text-[11px]">Mã xe (Device ID):</span>
-                <span className="font-mono font-black text-emerald-800 text-sm">{deviceId}</span>
-              </div>
-              <div className="bg-white/80 p-2.5 rounded-xl border border-emerald-200">
-                <span className="text-slate-500 block text-[11px]">Mã bảo mật phần cứng:</span>
-                <span className="font-mono font-bold text-slate-800 text-sm">••••••{verifyCode.slice(-4)}</span>
+              <div>
+                <h2 className="text-base font-bold text-amber-950">Yêu cầu đăng nhập trước khi kích hoạt</h2>
+                <p className="mt-1 text-xs leading-relaxed text-amber-900">
+                  Để thiết bị xe được gắn kết an toàn vào tài khoản của nhà trường, giáo viên hoặc cá nhân phụ huynh, bạn
+                  cần <strong>đăng nhập trước</strong> khi tiến hành ghép nối.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2.5">
+                  <a
+                    href={`/login?return_to=${encodeURIComponent(currentUrl)}`}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-700 px-4 py-2 text-xs font-bold text-white shadow hover:bg-amber-800 transition-colors"
+                  >
+                    <LogIn className="h-4 w-4" /> Đăng nhập ngay
+                  </a>
+                  <a
+                    href={`/register?return_to=${encodeURIComponent(currentUrl)}`}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-amber-700 bg-white px-4 py-2 text-xs font-bold text-amber-900 hover:bg-amber-100 transition-colors"
+                  >
+                    Đăng ký tài khoản
+                  </a>
+                </div>
               </div>
             </div>
           </div>
         ) : (
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6 shadow-sm">
-            <p className="text-xs font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1.5 mb-1">
-              <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Hướng dẫn ghép đôi nhanh:
-            </p>
-            <p className="text-xs text-slate-700">
-              Dùng điện thoại quét mã QR dán trên bo mạch xe hoặc nhập mã xe và mã bảo mật bên dưới để bắt đầu kiểm tra kết nối thật.
-            </p>
-          </div>
-        )}
-
-        {/* BẢNG THEO DÕI TÍN HIỆU PHẦN CỨNG REAL-TIME */}
-        {(deviceId || verifyCode) && (
-          <div className="bg-white rounded-3xl p-5 mb-6 shadow-md border border-slate-200">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-extrabold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                  📡 Kiểm Tra Tín Hiệu Bo Mạch Xe:
-                </span>
+          <div className="mb-6 flex items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50/90 p-4 shadow-sm">
+            <div className="flex items-center gap-3">
+              <span className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-700 text-white">
+                {currentUser.accountType === 'personal' ? <UserIcon className="h-5 w-5" /> : <SchoolIcon className="h-5 w-5" />}
+              </span>
+              <div>
+                <p className="text-xs font-semibold text-emerald-800">
+                  Đã đăng nhập: <strong className="text-emerald-950">{currentUser.displayName}</strong>
+                </p>
+                <p className="text-[11px] text-emerald-700">
+                  {currentUser.schoolName} ({currentUser.accountType === 'personal' ? 'Cá nhân' : 'Giáo viên/Trường'})
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => checkRealHardwareStatus(deviceId, verifyCode)}
-                disabled={checkingHardware}
-                className="text-[11px] font-semibold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 cursor-pointer disabled:opacity-50"
-              >
-                <svg className={`w-3.5 h-3.5 ${checkingHardware ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                <span>{checkingHardware ? 'Đang dò...' : 'Dò lại tín hiệu'}</span>
-              </button>
             </div>
-
-            {/* Trạng thái phần cứng */}
-            <div className="mt-3">
-              {hardwareStatus.statusLabel === 'TOKEN_SYNCED' ? (
-                <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-300 flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                    </svg>
-                  </div>
-                  <div>
-                    <span className="inline-block px-2 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider mb-1">
-                      KẾT NỐI REAL-TIME THÀNH CÔNG
-                    </span>
-                    <p className="text-xs font-bold text-slate-800">
-                      Bo mạch ESP32 đã nạp Token vào Flash NVS và đang truyền dữ liệu an toàn!
-                    </p>
-                    <p className="text-[11px] text-slate-600 mt-0.5">
-                      Xe đã sẵn sàng hoạt động trên bảng điều khiển giám sát.
-                    </p>
-                  </div>
-                </div>
-              ) : hardwareStatus.statusLabel === 'PAIRING_READY' ? (
-                <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-300 flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0 animate-pulse">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <span className="inline-block px-2 py-0.5 rounded-md bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider mb-1">
-                      ĐÃ PHÁT HIỆN TÍN HIỆU 4G TỪ XE (ONLINE)
-                    </span>
-                    <p className="text-xs font-bold text-emerald-900">
-                      Bo mạch xe vừa gửi yêu cầu ghép đôi (đã nhấn nút BOOT)!
-                    </p>
-                    <p className="text-[11px] text-slate-600 mt-0.5">
-                      {hardwareStatus.secondsSinceButton !== null
-                        ? `Tín hiệu nhận được cách đây ${hardwareStatus.secondsSinceButton} giây. Nhấn Xác Nhận bên dưới để hoàn tất.`
-                        : 'Sẵn sàng kích hoạt tài khoản học sinh ngay bây giờ.'}
-                    </p>
-                  </div>
-                </div>
-              ) : hardwareStatus.statusLabel === 'ONLINE' ? (
-                <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center shrink-0">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <span className="inline-block px-2 py-0.5 rounded-md bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider mb-1">
-                      XE ĐANG BẬT - CẦN BẤM NÚT BOOT
-                    </span>
-                    <p className="text-xs font-bold text-amber-900">
-                      Đã phát hiện xe đang hoạt động nhưng chưa mở chế độ ghép đôi.
-                    </p>
-                    <p className="text-[11px] text-slate-700 mt-1">
-                      👉 Hãy nhấn nút <strong>BOOT (Pair Button)</strong> trên xe một lần để xe gửi tín hiệu xác nhận ghép nối.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-300 flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-full bg-rose-500 text-white flex items-center justify-center shrink-0">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                    </svg>
-                  </div>
-                  <div>
-                    <span className="inline-block px-2 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider mb-1">
-                      CHƯA CÓ TÍN HIỆU TỪ XE (OFFLINE)
-                    </span>
-                    <p className="text-xs font-bold text-rose-900">
-                      Không thể ghép đôi giả mạo khi xe chưa bật nguồn!
-                    </p>
-                    <div className="text-[11px] text-slate-700 mt-1 space-y-1">
-                      <p>Vui lòng thực hiện các bước sau để kết nối REAL:</p>
-                      <ol className="list-decimal pl-4 space-y-0.5">
-                        <li>Bật công tắc nguồn của xe / bo mạch ESP32.</li>
-                        <li>Đợi đèn LED 4G sáng ổn định.</li>
-                        <li>Nhấn nút <strong>BOOT</strong> trên xe để phát tín hiệu lên máy chủ.</li>
-                      </ol>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* THÔNG BÁO XÁC THỰC TÀI KHOẢN TRƯỜNG HỌC */}
-        {verifiedSchool ? (
-          <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-4 mb-6 shadow-sm flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
-                Tài khoản trường học quản lý:
-              </p>
-              <p className="text-sm font-bold text-slate-900 mt-0.5">{verifiedSchool.name}</p>
-              <p className="text-[11px] font-mono text-emerald-700 mt-0.5">Token: {verifiedSchool.account_token}</p>
-            </div>
-            <span className="px-3 py-1 bg-emerald-600 text-white text-xs font-bold rounded-xl shadow-sm">
-              Đã khóa trường
+            <span className="rounded-full bg-emerald-200 px-2.5 py-1 text-[11px] font-bold text-emerald-900">
+              Sẵn sàng liên kết
             </span>
           </div>
-        ) : null}
+        )}
 
-        {/* MÀN HÌNH THÀNH CÔNG VÀ ĐỒNG BỘ TOKEN VỀ FLASH */}
+        {/* Success View */}
         {successData ? (
-          <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-xl border border-emerald-100 text-center animate-fade-in">
-            <div className="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <h2 className="text-2xl font-black text-slate-800">GHÉP ĐÔI THÀNH CÔNG!</h2>
-            <p className="text-sm text-slate-600 mt-2">
-              Hệ thống đã liên kết xe với học sinh và sẵn sàng truyền dữ liệu thật.
-            </p>
-
-            {/* Thông tin đã liên kết */}
-            <div className="mt-6 bg-slate-50 rounded-2xl p-4 text-left space-y-2 border border-slate-200 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Mã ID xe:</span>
-                <span className="font-bold text-emerald-700 font-mono">{successData.device_id}</span>
+          <section className="rounded-3xl border bg-white p-7 shadow-xl">
+            <div className="flex items-center gap-3 text-emerald-700">
+              <CheckCircle2 className="h-8 w-8" />
+              <div>
+                <h2 className="text-xl font-bold">Kích hoạt thành công!</h2>
+                <p className="text-xs text-slate-500">Mã xe {successData.device_id} đã kết nối vào hệ thống</p>
               </div>
+            </div>
+
+            {successData.viaBluetooth ? (
+              <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-xs text-blue-900">
+                <p className="font-bold flex items-center gap-1.5 text-blue-950">
+                  <Bluetooth className="h-4 w-4 text-blue-600" /> Đã nạp Token & Link API vào Flash qua Bluetooth thành công!
+                </p>
+                <p className="mt-1">
+                  Bo mạch ESP32 đã lưu cấu hình vào bộ nhớ Flash (NVS) và sẵn sàng truyền dữ liệu an toàn.
+                </p>
+              </div>
+            ) : null}
+
+            <div className="mt-5 space-y-3 rounded-2xl bg-slate-50 p-4 border text-xs">
               <div className="flex justify-between">
-                <span className="text-slate-500">Họ và tên học sinh:</span>
+                <span className="text-slate-500">Học sinh:</span>
                 <span className="font-bold text-slate-800">{successData.student_name}</span>
               </div>
               <div className="flex justify-between">
@@ -473,255 +543,235 @@ export default function ActivatePage() {
                 <span className="font-bold text-slate-800">{successData.student_class}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Trường quản lý:</span>
+                <span className="text-slate-500">Trường/Đơn vị:</span>
                 <span className="font-bold text-slate-800">{successData.school_name}</span>
               </div>
-              {successData.device_token && (
-                <div className="flex justify-between items-center pt-1 border-t">
-                  <span className="text-slate-500">Token thiết bị (Hardware):</span>
-                  <span className="font-bold text-indigo-700 font-mono text-xs">{successData.device_token}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Trạng thái nạp Token vào bộ nhớ Flash bo mạch */}
-            <div className="mt-5 p-4 rounded-2xl bg-indigo-50 border border-indigo-200 text-left">
-              <p className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
-                <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                Tự động lưu Token vào bộ nhớ Flash xe (NVS):
-              </p>
-
-              {hardwareStatus.tokenSynced ? (
-                <div className="mt-2 p-3 rounded-xl bg-emerald-100/70 border border-emerald-300 text-xs text-emerald-900 font-bold flex items-center gap-2">
-                  <svg className="w-4 h-4 text-emerald-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                  </svg>
-                  <span>Bo mạch ESP32 đã nạp Token thành công vào Flash! Xe đã kết nối Real-time.</span>
-                </div>
-              ) : (
-                <div className="mt-2 text-xs text-slate-700">
-                  <p>
-                    Bo mạch xe đang kết nối 4G sẽ tự động lấy Token lưu vào Flash NVS sau vài giây.
-                  </p>
-                  <p className="mt-1 font-bold text-indigo-800">
-                    👉 Bạn cũng có thể bấm nút <strong>BOOT (Ghép đôi)</strong> trên xe một lần nữa để xe nạp Token ngay lập tức!
+              <div className="flex justify-between">
+                <span className="text-slate-500">Mã xe:</span>
+                <span className="font-mono font-bold text-emerald-700">{successData.device_id}</span>
+              </div>
+              {successData.device_token ? (
+                <div className="border-t pt-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500">Device Token (Phần cứng):</span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(successData.device_token || '');
+                        setCopiedToken(true);
+                        setTimeout(() => setCopiedToken(false), 2000);
+                      }}
+                      className="inline-flex items-center gap-1 font-semibold text-emerald-700 hover:underline"
+                    >
+                      {copiedToken ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                      {copiedToken ? 'Đã sao chép' : 'Sao chép token'}
+                    </button>
+                  </div>
+                  <p className="mt-1 font-mono text-[11px] text-slate-700 break-all bg-white p-2 rounded-lg border">
+                    {successData.device_token}
                   </p>
                 </div>
-              )}
+              ) : null}
             </div>
 
             <div className="mt-6 flex flex-col sm:flex-row gap-3">
               <a
-                href="/login"
-                className="flex-1 inline-flex items-center justify-center rounded-xl bg-emerald-600 px-5 py-3.5 font-bold text-white hover:bg-emerald-700 transition shadow-lg"
+                href="/admin"
+                className="button-primary flex-1 py-3 text-center text-sm font-bold shadow"
               >
-                Vào Bảng Radar Giám Sát
+                Vào Bảng điều khiển theo dõi xe
               </a>
               <button
-                type="button"
                 onClick={() => {
                   setSuccessData(null);
+                  setDeviceId('');
+                  setVerifyCode('');
                   setStudentName('');
                   setStudentClass('');
                 }}
-                className="inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-5 py-3.5 font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                className="rounded-xl border px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
               >
                 Kích hoạt xe khác
               </button>
             </div>
-          </div>
+          </section>
         ) : (
-          /* FORM NHẬP THÔNG TIN VÀ XÁC THỰC */
-          <form
-            onSubmit={handleSubmit}
-            className="bg-white rounded-3xl p-6 sm:p-8 shadow-xl border border-slate-200/80 space-y-5"
-          >
-            {error && (
-              <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm font-medium flex items-start gap-2">
-                <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span>{error}</span>
+          <section className="rounded-3xl border bg-white p-7 shadow-xl">
+            {/* LỰA CHỌN CHẾ ĐỘ GHÉP NỐI: WIFI 4G VS BLUETOOTH */}
+            <div className="mb-6">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Chế độ ghép nối</label>
+              <div className="mt-2 grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1.5 border">
+                <button
+                  type="button"
+                  onClick={() => setPairingMode('wifi_4g')}
+                  className={`flex items-center justify-center gap-2 rounded-xl py-2.5 text-xs sm:text-sm font-bold transition-all ${
+                    pairingMode === 'wifi_4g'
+                      ? 'bg-white text-emerald-800 shadow-sm border'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Wifi className="h-4 w-4" />
+                  Ghép nối Wifi / 4G
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPairingMode('bluetooth')}
+                  className={`flex items-center justify-center gap-2 rounded-xl py-2.5 text-xs sm:text-sm font-bold transition-all ${
+                    pairingMode === 'bluetooth'
+                      ? 'bg-white text-emerald-800 shadow-sm border'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Bluetooth className="h-4 w-4" />
+                  Ghép nối Bluetooth (BLE)
+                </button>
+              </div>
+            </div>
+
+            {/* Chi tiết từng chế độ ghép nối */}
+            {pairingMode === 'bluetooth' ? (
+              <div className="mb-6 rounded-2xl border border-blue-200 bg-blue-50/80 p-4 text-xs text-blue-950">
+                <p className="font-bold flex items-center gap-1.5 text-blue-900">
+                  <Bluetooth className="h-4 w-4 text-blue-600" /> Ghép nối trực tiếp qua Bluetooth Low Energy (BLE)
+                </p>
+                <p className="mt-1 leading-relaxed">
+                  Trình duyệt sẽ kết nối không dây tới thiết bị ESP32 trên xe để tự đọc mã xác thực và nạp cấu hình token
+                  xuống bộ nhớ Flash, không cần chờ sóng 4G.
+                </p>
+
+                {bleError ? (
+                  <p className="mt-2.5 rounded-lg border border-red-300 bg-red-50 p-2.5 text-red-700 font-semibold">
+                    {bleError}
+                  </p>
+                ) : null}
+
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={bleConnecting}
+                    onClick={handleConnectBluetooth}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  >
+                    <Bluetooth className="h-4 w-4" />
+                    {bleConnecting
+                      ? 'Đang dò Bluetooth...'
+                      : bleConnected
+                      ? '✓ Đã kết nối xe (' + (bleDevice?.name || 'TDM2421') + ')'
+                      : '🔍 Quét & Kết nối Bluetooth'}
+                  </button>
+                  {bleConnected ? (
+                    <span className="text-[11px] font-bold text-emerald-700">Đã nhận ID & Code!</span>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 text-xs text-slate-700">
+                <p className="font-bold flex items-center gap-1.5 text-slate-900">
+                  <Radio className="h-4 w-4 text-emerald-600" /> Ghép nối qua đường truyền 4G / LTE
+                </p>
+                <p className="mt-1 leading-relaxed">
+                  1. Cấp nguồn cho bo mạch xe. 2. Nhấn nút <strong>BOOT (GPIO9)</strong> trên bo mạch ESP32. 3. Quét mã QR
+                  hoặc bấm xác nhận bên dưới.
+                </p>
+
+                {/* Trạng thái phần cứng thực tế */}
+                <div className="mt-3 rounded-xl border bg-white p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-600">Trạng thái xe:</span>
+                    <span
+                      className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                        hardwareStatus.pairingReady
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : hardwareStatus.online
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-slate-200 text-slate-700'
+                      }`}
+                    >
+                      {hardwareStatus.statusLabel}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-500">{hardwareStatus.message}</p>
+                </div>
               </div>
             )}
 
-            {/* Mã ID Xe từ QR Code (Khóa chỉ đọc nếu quét từ QR) */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                🏷️ Mã ID Xe (Từ mã QR thiết bị) <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={deviceId}
-                onChange={(e) => setDeviceId(e.target.value.toUpperCase())}
-                readOnly={isFromQR}
-                placeholder="VD: TDM-2421 hoặc XE01..."
-                required
-                className={`w-full px-4 py-3 rounded-xl border font-mono font-bold text-slate-800 transition ${
-                  isFromQR
-                    ? 'border-emerald-300 bg-emerald-50/50 text-emerald-900 cursor-not-allowed'
-                    : 'border-slate-300 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500'
-                }`}
-              />
-              <p className="text-[11px] text-slate-500 mt-1">
-                {isFromQR
-                  ? 'Mã xe được khóa tự động theo mã QR in trên xe để bảo đảm tính xác thực.'
-                  : 'Nhập chính xác mã ID xe nạp trong firmware.'}
-              </p>
-            </div>
+            {error ? (
+              <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-xs font-semibold text-red-800">
+                {error}
+              </div>
+            ) : null}
 
-            {/* Mã xác thực phần cứng (Khóa chỉ đọc nếu quét từ QR) */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                🔑 Mã Xác Thực Phần Cứng (Từ 1 - 1.000.000.000) <span className="text-rose-500">*</span>
-              </label>
-              <input
-                type={isFromQR ? 'password' : 'text'}
-                inputMode="numeric"
-                maxLength={10}
-                value={verifyCode}
-                onChange={(e) => setVerifyCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 10))}
-                readOnly={isFromQR}
-                placeholder="VD: 9824 hoặc mã bí mật trên bo mạch"
-                required
-                className={`w-full px-4 py-3 rounded-xl border font-mono transition ${
-                  isFromQR
-                    ? 'border-emerald-300 bg-emerald-50/50 text-emerald-900 cursor-not-allowed'
-                    : 'border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500'
-                }`}
-              />
-              <p className="text-[11px] text-slate-500 mt-1">
-                Mã xác thực duy nhất được nạp sẵn vào firmware của bo mạch xe.
-              </p>
-            </div>
-
-            {/* Trường học */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                🏫 Trường Học Quản Lý <span className="text-rose-500">*</span>
-              </label>
-              {verifiedSchool ? (
-                <input
-                  type="text"
-                  value={verifiedSchool.name}
-                  disabled
-                  className="w-full px-4 py-3 rounded-xl border border-emerald-300 bg-emerald-50/50 text-slate-800 font-bold"
-                />
-              ) : schools.length > 0 ? (
-                <select
-                  value={schoolId}
-                  onChange={(e) => setSchoolId(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
-                >
-                  {schools.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type="text"
-                  value="Trường THCS Mặc Định"
-                  disabled
-                  className="w-full px-4 py-3 rounded-xl border border-slate-300 bg-slate-100 text-slate-600"
-                />
-              )}
-            </div>
-
-            {/* Thông tin học sinh */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  👤 Họ và Tên Học Sinh <span className="text-rose-500">*</span>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1 text-xs font-bold text-slate-700">
+                  Mã xe (Device ID)
+                  <input
+                    value={deviceId}
+                    onChange={(e) => setDeviceId(e.target.value.toUpperCase().trim())}
+                    required
+                    placeholder="VD: XE01"
+                    className="form-input font-mono uppercase"
+                  />
                 </label>
-                <input
-                  type="text"
-                  value={studentName}
-                  onChange={(e) => setStudentName(e.target.value)}
-                  placeholder="VD: Nguyễn Văn Nam"
-                  required
-                  className="w-full px-4 py-3 rounded-xl border border-slate-300 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
-                />
+
+                <label className="grid gap-1 text-xs font-bold text-slate-700">
+                  Mã xác thực phần cứng (Verify Code)
+                  <input
+                    value={verifyCode}
+                    onChange={(e) => setVerifyCode(e.target.value.trim())}
+                    required
+                    placeholder="Số 1 - 1 tỷ (VD: 9824)"
+                    className="form-input font-mono"
+                  />
+                </label>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  🎒 Lớp Học <span className="text-rose-500">*</span>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1 text-xs font-bold text-slate-700">
+                  Họ và tên học sinh
+                  <input
+                    value={studentName}
+                    onChange={(e) => setStudentName(e.target.value)}
+                    required
+                    placeholder="Nguyễn Văn A"
+                    className="form-input"
+                  />
                 </label>
-                <input
-                  type="text"
-                  value={studentClass}
-                  onChange={(e) => setStudentClass(e.target.value.toUpperCase())}
-                  placeholder="VD: 9A1"
-                  required
-                  className="w-full px-4 py-3 rounded-xl border border-slate-300 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
-                />
+
+                <label className="grid gap-1 text-xs font-bold text-slate-700">
+                  Lớp học
+                  <input
+                    value={studentClass}
+                    onChange={(e) => setStudentClass(e.target.value.toUpperCase())}
+                    required
+                    placeholder="10A1"
+                    className="form-input uppercase"
+                  />
+                </label>
               </div>
-            </div>
 
-            {/* Số điện thoại phụ huynh */}
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                📞 Số Điện Thoại Phụ Huynh (Nhận SMS cảnh báo)
+              <label className="grid gap-1 text-xs font-bold text-slate-700">
+                Số điện thoại phụ huynh nhận SMS cảnh báo (Tùy chọn)
+                <input
+                  value={parentPhone}
+                  onChange={(e) => setParentPhone(e.target.value.trim())}
+                  placeholder="0912345678"
+                  className="form-input"
+                />
               </label>
-              <input
-                type="tel"
-                value={parentPhone}
-                onChange={(e) => setParentPhone(e.target.value)}
-                placeholder="VD: 0912345678"
-                className="w-full px-4 py-3 rounded-xl border border-slate-300 text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition"
-              />
-              <p className="text-[11px] text-slate-500 mt-1">
-                Số điện thoại nhận tin nhắn khẩn cấp khi xe vượt tốc độ hoặc không đội mũ bảo hiểm.
-              </p>
-            </div>
 
-            {/* Nút bấm Submit - Chỉ mở khi thiết bị thực tế đang phát tín hiệu */}
-            <div className="pt-2">
               <button
                 type="submit"
-                disabled={loading || (!hardwareStatus.pairingReady && !hardwareStatus.online)}
-                className={`w-full flex items-center justify-center gap-2 rounded-xl px-6 py-4 font-bold text-white shadow-lg transition ${
-                  hardwareStatus.pairingReady || hardwareStatus.online
-                    ? 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer focus:ring-4 focus:ring-emerald-200'
-                    : 'bg-slate-400 cursor-not-allowed opacity-60'
-                }`}
+                disabled={loading || !currentUser}
+                className="button-primary mt-2 w-full py-3 text-sm font-bold shadow-md disabled:opacity-50"
               >
-                {loading ? (
-                  <>
-                    <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-                    </svg>
-                    <span>Đang kết nối Real-time với xe...</span>
-                  </>
-                ) : hardwareStatus.pairingReady || hardwareStatus.online ? (
-                  <>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    <span>XÁC NHẬN GHÉP ĐÔI REAL-TIME</span>
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                    <span>BẬT NGUỒN VÀ BẤM NÚT BOOT TRÊN XE ĐỂ KÍCH HOẠT</span>
-                  </>
-                )}
+                {loading
+                  ? 'Đang xác thực & gửi API...'
+                  : pairingMode === 'bluetooth'
+                  ? 'Xác nhận & Nạp Token vào Flash qua Bluetooth'
+                  : 'Xác nhận & Ghép nối xe'}
               </button>
-
-              {!hardwareStatus.pairingReady && !hardwareStatus.online && (
-                <p className="text-[11px] text-center text-rose-600 font-semibold mt-2">
-                  ⚠️ Nút xác nhận đang khóa vì chưa phát hiện tín hiệu 4G từ bo mạch xe.
-                </p>
-              )}
-            </div>
-          </form>
+            </form>
+          </section>
         )}
       </div>
     </main>

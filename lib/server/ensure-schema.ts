@@ -7,6 +7,7 @@ import m4 from '../../drizzle/0004_helmet_safety.sql?raw';
 import m5 from '../../drizzle/0005_device_pairing.sql?raw';
 import m6 from '../../drizzle/0006_account_and_device_tokens.sql?raw';
 import m7 from '../../drizzle/0007_realtime_hardware_sync.sql?raw';
+import m8 from '../../drizzle/0008_account_types_and_student_subaccounts.sql?raw';
 
 let initialized = false;
 
@@ -17,9 +18,10 @@ export async function ensureSchema() {
     if (!env?.DB) return;
     await env.DB.prepare('SELECT 1 FROM users LIMIT 1').first();
     await env.DB.prepare('SELECT 1 FROM app_sessions LIMIT 1').first();
-    // Verify columns exist
-    await env.DB.prepare('SELECT verify_code, device_token, token_synced_at FROM devices LIMIT 1').first();
-    await env.DB.prepare('SELECT account_token FROM schools LIMIT 1').first();
+    // Verify columns and tables exist
+    await env.DB.prepare('SELECT verify_code, device_token, token_synced_at, api_url FROM devices LIMIT 1').first();
+    await env.DB.prepare('SELECT account_token, account_type FROM schools LIMIT 1').first();
+    await env.DB.prepare('SELECT 1 FROM student_accounts LIMIT 1').first();
 
     // Auto-backfill verify_code
     try {
@@ -48,13 +50,22 @@ export async function ensureSchema() {
       `).run();
     } catch {}
 
+    // Auto-backfill account_type on schools
+    try {
+      await env.DB.prepare(`
+        UPDATE schools 
+        SET account_type = 'school'
+        WHERE account_type IS NULL OR account_type = ''
+      `).run();
+    } catch {}
+
     initialized = true;
     return;
   } catch {
     // Tables or columns not ready yet, continue to apply migration statements
   }
 
-  const migrations = [m0, m1, m2, m3, m4, m5, m6, m7];
+  const migrations = [m0, m1, m2, m3, m4, m5, m6, m7, m8];
   for (const sqlFile of migrations) {
     const rawStatements = sqlFile.split('--> statement-breakpoint');
     for (const chunk of rawStatements) {
@@ -105,6 +116,14 @@ export async function ensureSchema() {
       UPDATE schools 
       SET account_token = 'acc_' || lower(hex(randomblob(12)))
       WHERE account_token IS NULL OR account_token = ''
+    `).run();
+  } catch {}
+
+  try {
+    await env.DB.prepare(`
+      UPDATE schools 
+      SET account_type = 'school'
+      WHERE account_type IS NULL OR account_type = ''
     `).run();
   } catch {}
 

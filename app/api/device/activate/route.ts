@@ -24,6 +24,7 @@ export async function POST(request: Request) {
     const schoolIdInput = optionalText(body.school_id, 'Trường học', 64);
     const parentPhone = optionalText(body.parent_phone, 'Số điện thoại phụ huynh', 20)?.trim();
     const parentName = optionalText(body.parent_name, 'Tên phụ huynh', 100)?.trim() || `Phụ huynh em ${studentName}`;
+    const pairingMode = optionalText(body.pairing_mode, 'Chế độ ghép nối', 32)?.toLowerCase() || 'wifi_4g';
 
     // 1. Xác định trường học / tài khoản quản lý
     let school = null;
@@ -120,21 +121,23 @@ export async function POST(request: Request) {
       }
     }
 
-    // 2.5. KIỂM TRA BẮT BUỘC TÍN HIỆU PHẦN CỨNG THỰC TẾ (REAL HARDWARE PAIRING CHECK)
-    // Thiết bị phần cứng phải đang mở nguồn và đã bấm nút BOOT (hoặc gửi dữ liệu 4G gần nhất).
-    // Tuyệt đối không cho phép ghép nối ảo khi thiết bị tắt nguồn hoặc không có thật.
-    const nowMs = Date.now();
-    const requestedAtMs = device.pairing_requested_at ? new Date(device.pairing_requested_at).getTime() : 0;
-    const isPairingFresh = device.pairing_pending === 1 && (nowMs - requestedAtMs < 15 * 60 * 1000);
-    const lastSeenMs = device.last_seen ? new Date(device.last_seen).getTime() : 0;
-    const isRecentlyActive = (nowMs - lastSeenMs < 5 * 60 * 1000);
+    // 2.5. KIỂM TRA TÍN HIỆU PHẦN CỨNG THỰC TẾ
+    // Với chế độ wifi_4g: Thiết bị phải đang mở nguồn và đã bấm nút BOOT (hoặc gửi 4G gần nhất).
+    // Với chế độ bluetooth: Trình duyệt kết nối trực tiếp với phần cứng tại chỗ nên chấp nhận kết nối trực tiếp.
+    if (pairingMode === 'wifi_4g') {
+      const nowMs = Date.now();
+      const requestedAtMs = device.pairing_requested_at ? new Date(device.pairing_requested_at).getTime() : 0;
+      const isPairingFresh = device.pairing_pending === 1 && (nowMs - requestedAtMs < 15 * 60 * 1000);
+      const lastSeenMs = device.last_seen ? new Date(device.last_seen).getTime() : 0;
+      const isRecentlyActive = (nowMs - lastSeenMs < 5 * 60 * 1000);
 
-    if (!isPairingFresh && !isRecentlyActive) {
-      throw new ApiError(
-        400,
-        'Không thể ghép đôi! Thiết bị xe chưa bật nguồn hoặc chưa nhấn nút Ghép đôi (BOOT). Vui lòng bật nguồn bo mạch và nhấn nút BOOT trên xe để truyền tín hiệu thực tế qua 4G trước khi xác nhận!',
-        'device_offline_or_not_in_pairing_mode'
-      );
+      if (!isPairingFresh && !isRecentlyActive) {
+        throw new ApiError(
+          400,
+          'Không thể ghép đôi! Thiết bị xe chưa bật nguồn hoặc chưa nhấn nút Ghép đôi (BOOT). Vui lòng bật nguồn bo mạch và nhấn nút BOOT trên xe để truyền tín hiệu thực tế qua 4G trước khi xác nhận!',
+          'device_offline_or_not_in_pairing_mode'
+        );
+      }
     }
 
     // 3. Tạo hồ sơ học sinh
@@ -159,14 +162,15 @@ export async function POST(request: Request) {
     }
     const tokenHash = await sha256(deviceToken);
 
+    const origin = new URL(request.url).origin;
+    const telemetryUrl = `${origin}/api/device/telemetry`;
+    const apiTokenUrl = `${origin}/api/device/token?device_id=${encodeURIComponent(rawDeviceId)}&verify_secret=${encodeURIComponent(verifyCode)}`;
+
     // 6. Nối thiết bị với học sinh và lưu Custom ID + Verify Code + Token phần cứng + Cập nhật trường học
     // Đặt pairing_pending = 2 (Đã liên kết trên web, đang chờ bo mạch ESP32 lấy token về Flash)
     await env.DB.prepare(
-      'UPDATE devices SET student_id = ?, school_id = ?, device_id = ?, device_name = ?, device_token = ?, device_token_hash = ?, verify_code = ?, paired_at = ?, pairing_pending = 2, enabled = 1, updated_at = ? WHERE id = ?'
-    ).bind(studentId, schoolId, rawDeviceId, `Xe của ${studentName} (${studentClass})`, deviceToken, tokenHash, verifyCode, now, now, device.id).run();
-
-    const origin = new URL(request.url).origin;
-    const apiTokenUrl = `${origin}/api/device/token?device_id=${encodeURIComponent(rawDeviceId)}&verify_secret=${encodeURIComponent(verifyCode)}`;
+      'UPDATE devices SET student_id = ?, school_id = ?, device_id = ?, device_name = ?, device_token = ?, device_token_hash = ?, api_url = ?, verify_code = ?, paired_at = ?, pairing_pending = 2, enabled = 1, updated_at = ? WHERE id = ?'
+    ).bind(studentId, schoolId, rawDeviceId, `Xe của ${studentName} (${studentClass})`, deviceToken, tokenHash, telemetryUrl, verifyCode, now, now, device.id).run();
 
     return json({
       success: true,
@@ -176,6 +180,7 @@ export async function POST(request: Request) {
         device_token: deviceToken,
         account_token: school.account_token,
         api_token_url: apiTokenUrl,
+        telemetry_url: telemetryUrl,
         student_name: studentName,
         student_class: studentClass,
         school_name: school.name,
