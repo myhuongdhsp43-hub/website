@@ -224,3 +224,44 @@ export const studentAccounts = sqliteTable('student_accounts', {
   uniqueIndex('uq_student_accounts_school_username').on(table.schoolId, table.username),
   index('idx_student_accounts_school_id').on(table.schoolId),
 ]);
+
+export const chatConversations = sqliteTable('chat_conversations', {
+  id: text('id').primaryKey(),
+  schoolId: text('school_id').notNull().references(() => schools.id),
+  type: text('type', { enum: ['direct', 'group'] }).notNull().default('direct'),
+  title: text('title'),
+  createdBy: text('created_by').notNull(),
+  ...timestamps,
+}, (table) => [
+  index('idx_chat_conversations_school').on(table.schoolId),
+]);
+
+export const chatParticipants = sqliteTable('chat_participants', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id').notNull().references(() => chatConversations.id),
+  userId: text('user_id').notNull(),
+  userType: text('user_type', { enum: ['teacher', 'student'] }).notNull(),
+  userName: text('user_name').notNull(),
+  joinedAt: text('joined_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  uniqueIndex('uq_chat_participants_conv_user').on(table.conversationId, table.userId),
+  index('idx_chat_participants_user').on(table.userId),
+]);
+
+export const chatMessages = sqliteTable('chat_messages', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id').notNull().references(() => chatConversations.id),
+  senderId: text('sender_id').notNull(),
+  senderType: text('sender_type', { enum: ['teacher', 'student'] }).notNull(),
+  senderName: text('sender_name').notNull(),
+  message: text('message').notNull(),
+  fileUrl: text('file_url'),
+  fileName: text('file_name'),
+  fileType: text('file_type'),
+  fileSize: integer('file_size'),
+  isAlert: integer('is_alert', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, (table) => [
+  index('idx_chat_messages_conv_created').on(table.conversationId, table.createdAt),
+]);
+

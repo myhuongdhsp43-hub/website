@@ -15,6 +15,7 @@ import {
   LoaderCircle,
   LogOut,
   MapPinned,
+  MessageSquare,
   Plus,
   QrCode,
   RadioTower,
@@ -29,8 +30,9 @@ import {
 } from 'lucide-react';
 import { DeviceMap, type DeviceMarker, type TrailPoint } from './device-map';
 import { HelmetSmsPanel } from './helmet-sms-panel';
+import { ChatView } from './chat-view';
 
-type View = 'overview' | 'map' | 'students' | 'devices' | 'subaccounts' | 'alerts' | 'history' | 'statistics' | 'settings' | 'account';
+type View = 'overview' | 'map' | 'students' | 'devices' | 'subaccounts' | 'chat' | 'alerts' | 'history' | 'statistics' | 'settings' | 'account';
 type DashboardDevice = { helmet_worn: number | null; helmet_detection_enabled: number; id: string; device_id: string; current_speed: number | null; speed_limit: number; gps_valid: number; last_seen: string | null; network_signal: number | null; full_name: string | null; student_code: string | null; class_name: string | null; online: number; overspeed: number };
 type DashboardData = { user: { displayName: string; email: string; role: string; schoolName: string; schoolId?: string; accountToken?: string | null }; stats: Record<'students' | 'devices' | 'online' | 'offline' | 'moving' | 'todayOverspeed' | 'weekOverspeed' | 'openAlerts', number>; devices: DashboardDevice[] };
 type Student = { id: string; student_code: string; full_name: string; class_name: string; grade: string | null; academic_year?: string | null; vehicle_plate?: string | null; notes?: string | null; active: number; device_id: string | null };
@@ -49,6 +51,7 @@ const navigation: { view: View; label: string; icon: typeof CircleGauge }[] = [
   { view: 'students', label: 'Học sinh', icon: Users },
   { view: 'devices', label: 'Thiết bị', icon: Bike },
   { view: 'subaccounts', label: 'Tài khoản con', icon: KeyRound },
+  { view: 'chat', label: 'Tin nhắn', icon: MessageSquare },
   { view: 'alerts', label: 'Cảnh báo', icon: Bell },
   { view: 'history', label: 'Lịch sử', icon: History },
   { view: 'statistics', label: 'Thống kê', icon: BarChart3 },
@@ -87,7 +90,7 @@ export function DashboardApp() {
   const userRole = dashboard?.user.role;
   const filteredNav = navigation.filter((item) => {
     if (userRole === 'student') {
-      return ['overview', 'map', 'history', 'account'].includes(item.view);
+      return ['overview', 'map', 'chat', 'history', 'account'].includes(item.view);
     }
     return true;
   });
@@ -156,6 +159,7 @@ export function DashboardApp() {
               schoolName={dashboard?.user.schoolName ?? 'Trường'}
             />
           ) : null}
+          {view === 'chat' ? <ChatView onMessage={setMessage} currentUserRole={dashboard?.user.role} /> : null}
           {view === 'alerts' ? <AlertsView onMessage={setMessage} onRefresh={refreshDashboard} /> : null}
           {view === 'history' ? <HistoryView onMessage={setMessage} /> : null}
           {view === 'statistics' ? <StatisticsView onMessage={setMessage} /> : null}
