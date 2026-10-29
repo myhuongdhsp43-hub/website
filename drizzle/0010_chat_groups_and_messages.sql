@@ -39,3 +39,22 @@ CREATE TABLE IF NOT EXISTS `chat_messages` (
 );
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `idx_chat_messages_conv_created` ON `chat_messages` (`conversation_id`, `created_at`);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `chat_files` (
+	`id` text PRIMARY KEY NOT NULL,
+	`school_id` text NOT NULL REFERENCES `schools`(`id`),
+	`filename` text NOT NULL,
+	`content_type` text NOT NULL,
+	`size` integer NOT NULL,
+	`total_chunks` integer NOT NULL,
+	`created_at` text NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `chat_file_chunks` (
+	`file_id` text NOT NULL,
+	`chunk_index` integer NOT NULL,
+	`data` text NOT NULL,
+	PRIMARY KEY (`file_id`, `chunk_index`)
+);
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `idx_chat_file_chunks_file` ON `chat_file_chunks` (`file_id`);

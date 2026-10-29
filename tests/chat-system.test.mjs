@@ -112,7 +112,7 @@ test('chat UI component provides group creation, direct student messaging, file 
   assert.match(chatViewSource, /handleFileSelect/);
   assert.match(chatViewSource, /previewImage/);
   assert.match(chatViewSource, /CẢNH BÁO AN TOÀN TỪ GIÁO VIÊN/);
-  assert.match(chatViewSource, /uploadFileToStorageTo/);
+  assert.match(chatViewSource, /uploadFileSecurely/);
   assert.match(chatViewSource, /Tải về máy/);
 });
 
@@ -130,11 +130,15 @@ test('storage.to chat upload API route supports 25GB max file size, 3/7 days exp
   assert.match(uploadRouteSource, /DEFAULT_EXPIRY_DAYS = 7/);
   assert.match(uploadRouteSource, /expiryDays !== 3 && expiryDays !== 7/);
 
-  // Verify direct init and confirm endpoints
-  assert.match(uploadRouteSource, /\/upload\/init/);
-  assert.match(uploadRouteSource, /\/upload\/confirm/);
-  assert.match(uploadRouteSource, /\/sharex\/upload/);
-
   // Verify authentication barrier
   assert.match(uploadRouteSource, /requirePasswordUser/);
+});
+
+test('chat download route supports streaming binary files with correct Content-Disposition attachment', async () => {
+  const downloadRouteSource = await readFile(new URL('../app/api/chat/download/route.ts', import.meta.url), 'utf8');
+
+  assert.match(downloadRouteSource, /chat_files/);
+  assert.match(downloadRouteSource, /chat_file_chunks/);
+  assert.match(downloadRouteSource, /attachment; filename=/);
+  assert.match(downloadRouteSource, /base64ToUint8Array/);
 });

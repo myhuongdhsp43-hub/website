@@ -25,6 +25,7 @@ export async function ensureSchema() {
     await env.DB.prepare('SELECT account_token, account_type FROM schools LIMIT 1').first();
     await env.DB.prepare('SELECT 1 FROM student_accounts LIMIT 1').first();
     await env.DB.prepare('SELECT 1 FROM chat_conversations LIMIT 1').first();
+    await env.DB.prepare('SELECT 1 FROM chat_files LIMIT 1').first();
 
     // Auto-backfill verify_code
     try {

@@ -89,6 +89,19 @@ function formatBytes(bytes: number | null | undefined): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
+function readFileSliceAsBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(',')[1] || '';
+      resolve(base64);
+    };
+    reader.onerror = () => reject(new Error('Lỗi đọc dữ liệu tệp tin.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
 export function ChatView({
   onMessage,
   currentUserRole,
@@ -246,91 +259,61 @@ export function ChatView({
     e.target.value = '';
   };
 
-  // 5. Quy trình tải file trực tiếp lên storage.to (Cloud R2 Edge, hỗ trợ tối đa 25GB)
-  const uploadFileToStorageTo = async (
+  // 5. Quy trình tải file trực tiếp (Chunk upload an toàn và hỗ trợ link storage.to)
+  const uploadFileSecurely = async (
     att: SelectedAttachment
   ): Promise<{ fileUrl: string; fileName: string; fileSize: number; fileType: string }> => {
-    // Bước 1: Khởi tạo phiên tải lên lấy presigned R2 upload URL
-    setUploadProgress(10);
-    setUploadStatusText('Đang khởi tạo phiên tải lên storage.to...');
+    // Kích thước mỗi khối: 512KB để tối ưu tốc độ và không gây quá tải HTTP
+    const CHUNK_SIZE = 512 * 1024;
+    const totalChunks = Math.max(1, Math.ceil(att.file.size / CHUNK_SIZE));
+    const fileId = crypto.randomUUID();
 
-    const initRes = await fetch('/api/chat/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'init',
-        filename: att.name,
-        content_type: att.type,
-        size: att.size,
-        expiry_days: att.expiryDays,
-      }),
-    });
+    setUploadProgress(5);
+    setUploadStatusText(`Chuẩn bị truyền file (${att.humanSize})...`);
 
-    const initData = await initRes.json();
-    if (!initRes.ok || !initData?.success || !initData?.upload_url) {
-      throw new Error(initData?.error?.message || initData?.message || 'Không thể khởi tạo tải lên storage.to.');
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, att.file.size);
+      const slice = att.file.slice(start, end);
+      const base64Data = await readFileSliceAsBase64(slice);
+
+      const percent = Math.min(99, Math.max(8, Math.round(((i + 1) / totalChunks) * 100)));
+      setUploadProgress(percent);
+      setUploadStatusText(`Đang truyền (${formatBytes(end)} / ${att.humanSize}) - ${percent}%...`);
+
+      const res = await fetch('/api/chat/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'chunk',
+          file_id: fileId,
+          filename: att.name,
+          content_type: att.type,
+          size: att.size,
+          chunk_index: i,
+          total_chunks: totalChunks,
+          data: base64Data,
+        }),
+      });
+
+      const resData = await res.json();
+      if (!res.ok || !resData?.success) {
+        throw new Error(resData?.error?.message || resData?.message || `Lỗi truyền khối dữ liệu ${i + 1}/${totalChunks}.`);
+      }
+
+      if (resData.completed && resData.file) {
+        setUploadProgress(100);
+        setUploadStatusText('Tải lên hoàn tất!');
+        return {
+          fileUrl: resData.file.url,
+          fileName: resData.file.filename || att.name,
+          fileSize: resData.file.size || att.size,
+          fileType: att.type,
+        };
+      }
     }
 
-    // Bước 2: Tải dữ liệu trực tiếp từ trình duyệt lên R2 Edge (không nghẽn server)
-    setUploadProgress(20);
-    setUploadStatusText(`Đang tải trực tiếp lên Cloud Edge (${att.humanSize})...`);
-
-    await new Promise<void>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('PUT', initData.upload_url);
-      xhr.setRequestHeader('Content-Type', att.type);
-
-      xhr.upload.onprogress = (evt) => {
-        if (evt.lengthComputable) {
-          const percent = Math.min(95, Math.max(20, Math.round(20 + (evt.loaded / evt.total) * 75)));
-          setUploadProgress(percent);
-          setUploadStatusText(`Đang truyền file (${formatBytes(evt.loaded)} / ${att.humanSize}) - ${percent}%...`);
-        }
-      };
-
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve();
-        } else {
-          reject(new Error(`Tải lên R2 thất bại với mã trạng thái ${xhr.status}.`));
-        }
-      };
-
-      xhr.onerror = () => reject(new Error('Lỗi kết nối mạng trong quá trình truyền tải file.'));
-      xhr.send(att.file);
-    });
-
-    // Bước 3: Xác nhận hoàn tất với storage.to để nhận URL tải về
-    setUploadProgress(98);
-    setUploadStatusText('Đang xác nhận với storage.to...');
-
-    const confirmRes = await fetch('/api/chat/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'confirm',
-        r2_key: initData.r2_key,
-        filename: att.name,
-        content_type: att.type,
-        size: att.size,
-        expiry_days: att.expiryDays,
-      }),
-    });
-
-    const confData = await confirmRes.json();
-    if (!confirmRes.ok || !confData?.success || !confData?.file?.url) {
-      throw new Error(confData?.error?.message || confData?.message || 'Không thể xác nhận hoàn tất file với storage.to.');
-    }
-
-    setUploadProgress(100);
-    setUploadStatusText('Tải lên hoàn tất!');
-
-    return {
-      fileUrl: confData.file.url,
-      fileName: confData.file.filename || att.name,
-      fileSize: confData.file.size || att.size,
-      fileType: att.type,
-    };
+    throw new Error('Không thể hoàn tất truyền dữ liệu file.');
   };
 
   // 6. Gửi tin nhắn
@@ -344,7 +327,7 @@ export function ChatView({
 
     try {
       if (attachment) {
-        uploadedMeta = await uploadFileToStorageTo(attachment);
+        uploadedMeta = await uploadFileSecurely(attachment);
       }
 
       const res = await fetch('/api/chat/messages', {
@@ -789,15 +772,15 @@ export function ChatView({
                               {isImage && (
                                 <div className="mb-2 rounded-xl overflow-hidden border border-slate-200 bg-black/5 max-w-sm">
                                   <img
-                                    src={msg.file_url}
+                                    src={msg.file_url.startsWith('/api/chat/download') ? `${msg.file_url}&preview=1` : msg.file_url}
                                     alt={msg.file_name || 'Ảnh đính kèm'}
-                                    onClick={() => setPreviewImage(msg.file_url)}
+                                    onClick={() => setPreviewImage(msg.file_url?.startsWith('/api/chat/download') ? `${msg.file_url}&preview=1` : msg.file_url)}
                                     className="max-h-60 w-auto object-cover cursor-pointer hover:opacity-95 transition"
                                   />
                                 </div>
                               )}
 
-                              {/* Thẻ thông tin file tải về trực tiếp từ storage.to */}
+                              {/* Thẻ thông tin file tải về trực tiếp từ storage.to / hệ thống */}
                               <div
                                 className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-2.5 rounded-xl border ${
                                   isMe
@@ -820,7 +803,7 @@ export function ChatView({
                                       <span>•</span>
                                       <span className="flex items-center gap-0.5">
                                         <Clock className="h-2.5 w-2.5" />
-                                        Hạn 7 ngày (storage.to)
+                                        {msg.file_url.includes('storage.to') ? 'storage.to 25GB (Hạn 7 ngày)' : 'Lưu trữ An Toàn Xe (Tải trực tiếp)'}
                                       </span>
                                     </div>
                                   </div>
@@ -833,7 +816,7 @@ export function ChatView({
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     download={msg.file_name || true}
-                                    title="Tải trực tiếp về máy từ storage.to"
+                                    title="Tải trực tiếp về máy"
                                     className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-bold text-[10px] shadow-xs transition ${
                                       isMe
                                         ? 'bg-white text-emerald-800 hover:bg-emerald-50'
