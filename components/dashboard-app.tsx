@@ -938,8 +938,10 @@ function SubaccountsView({ onMessage, schoolId, schoolName }: { onMessage: (msg:
     }
   }
 
-  async function submit(form: FormData) {
+  async function submit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
     setSaving(true);
+    const form = new FormData(e.currentTarget);
     try {
       await api('/api/subaccounts', {
         method: 'POST',
@@ -1000,7 +1002,7 @@ function SubaccountsView({ onMessage, schoolId, schoolName }: { onMessage: (msg:
 
       {showForm ? (
         <FormBox title="Tạo tài khoản học sinh con mới" onClose={() => setShowForm(false)}>
-          <form action={submit} className="grid gap-4 sm:grid-cols-2">
+          <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
             <Input label="Họ và tên học sinh" name="full_name" placeholder="Ví dụ: Nguyễn Văn A" required />
             <Input label="Lớp học" name="class_name" placeholder="Ví dụ: 10A1" required />
             <Input

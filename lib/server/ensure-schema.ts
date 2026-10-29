@@ -8,6 +8,7 @@ import m5 from '../../drizzle/0005_device_pairing.sql?raw';
 import m6 from '../../drizzle/0006_account_and_device_tokens.sql?raw';
 import m7 from '../../drizzle/0007_realtime_hardware_sync.sql?raw';
 import m8 from '../../drizzle/0008_account_types_and_student_subaccounts.sql?raw';
+import m9 from '../../drizzle/0009_student_sessions_fk_fix.sql?raw';
 
 let initialized = false;
 
@@ -59,13 +60,38 @@ export async function ensureSchema() {
       `).run();
     } catch {}
 
+    // Ensure app_sessions has no foreign key constraint to users (allowing student sub-account sessions)
+    try {
+      const fkList = await env.DB.prepare('PRAGMA foreign_key_list(app_sessions)').all<{ table: string }>();
+      const hasUserFk = fkList.results?.some((r) => r.table === 'users');
+      if (hasUserFk) {
+        await env.DB.prepare(`
+          CREATE TABLE IF NOT EXISTS app_sessions_new (
+            id text PRIMARY KEY NOT NULL,
+            user_id text NOT NULL,
+            token_hash text NOT NULL,
+            expires_at text NOT NULL,
+            created_at text NOT NULL
+          )
+        `).run();
+        await env.DB.prepare(`
+          INSERT OR IGNORE INTO app_sessions_new (id, user_id, token_hash, expires_at, created_at)
+          SELECT id, user_id, token_hash, expires_at, created_at FROM app_sessions
+        `).run();
+        await env.DB.prepare('DROP TABLE app_sessions').run();
+        await env.DB.prepare('ALTER TABLE app_sessions_new RENAME TO app_sessions').run();
+        await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS uq_app_sessions_token_hash ON app_sessions (token_hash)').run();
+        await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_app_sessions_user_expires ON app_sessions (user_id, expires_at)').run();
+      }
+    } catch {}
+
     initialized = true;
     return;
   } catch {
     // Tables or columns not ready yet, continue to apply migration statements
   }
 
-  const migrations = [m0, m1, m2, m3, m4, m5, m6, m7, m8];
+  const migrations = [m0, m1, m2, m3, m4, m5, m6, m7, m8, m9];
   for (const sqlFile of migrations) {
     const rawStatements = sqlFile.split('--> statement-breakpoint');
     for (const chunk of rawStatements) {

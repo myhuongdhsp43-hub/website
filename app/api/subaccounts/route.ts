@@ -31,9 +31,6 @@ export async function GET() {
       device_name: string | null;
     }>();
 
-    // Link đăng nhập dành riêng cho học sinh thuộc trường này
-    const origin = typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_APP_URL ? process.env.NEXT_PUBLIC_APP_URL : '';
-
     return noStore(json({
       success: true,
       accounts: accounts.results,
@@ -78,14 +75,24 @@ export async function POST(request: Request) {
     let finalStudentId = studentIdInput || null;
     const now = new Date().toISOString();
 
-    // Nếu chưa chọn học sinh có sẵn, tự động tạo hồ sơ học sinh tương ứng
+    // Nếu chưa chọn học sinh có sẵn, tìm học sinh đã có cùng tên và lớp hoặc tạo mới an toàn
     if (!finalStudentId) {
-      const generatedCode = `HS-${className}-${Date.now().toString().slice(-4)}`;
-      finalStudentId = crypto.randomUUID();
-      await env.DB.prepare(`
-        INSERT INTO students (id, school_id, student_code, full_name, class_name, active, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-      `).bind(finalStudentId, context.schoolId, generatedCode, fullName, className, now, now).run();
+      const existingStudent = await env.DB.prepare(`
+        SELECT id FROM students WHERE school_id = ? AND full_name = ? AND class_name = ? LIMIT 1
+      `).bind(context.schoolId, fullName, className).first<{ id: string }>();
+
+      if (existingStudent?.id) {
+        finalStudentId = existingStudent.id;
+      } else {
+        const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+        const cleanClass = className.replace(/[^A-Za-z0-9]/g, '') || 'L';
+        const generatedCode = `HS-${cleanClass}-${Date.now().toString().slice(-4)}-${randomSuffix}`;
+        finalStudentId = crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO students (id, school_id, student_code, full_name, class_name, active, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        `).bind(finalStudentId, context.schoolId, generatedCode, fullName, className, now, now).run();
+      }
     }
 
     const salt = randomToken();
@@ -108,7 +115,7 @@ export async function POST(request: Request) {
         student_id: finalStudentId,
         created_at: now,
       },
-    }, 201);
+    }, { status: 201 });
   } catch (error) {
     return apiError(error);
   }
@@ -124,13 +131,18 @@ export async function DELETE(request: Request) {
     const id = url.searchParams.get('id');
     if (!id) throw new ApiError(400, 'Thiếu id tài khoản cần xóa.', 'validation_error');
 
-    const result = await env.DB.prepare(
-      'DELETE FROM student_accounts WHERE id = ? AND school_id = ?'
-    ).bind(id, context.schoolId).run();
+    const existing = await env.DB.prepare(
+      'SELECT id FROM student_accounts WHERE id = ? AND school_id = ?'
+    ).bind(id, context.schoolId).first();
 
-    if (!result.meta.changes) {
+    if (!existing) {
       throw new ApiError(404, 'Không tìm thấy tài khoản học sinh con cần xóa.', 'not_found');
     }
+
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM app_sessions WHERE user_id = ?').bind(id),
+      env.DB.prepare('DELETE FROM student_accounts WHERE id = ? AND school_id = ?').bind(id, context.schoolId),
+    ]);
 
     return json({
       success: true,

@@ -1,21 +1,36 @@
 import { NextResponse } from 'next/server';
 
 export class ApiError extends Error {
+  public isApiError = true;
   constructor(public status: number, message: string, public code = 'request_error') {
     super(message);
+    this.name = 'ApiError';
+    Object.setPrototypeOf(this, ApiError.prototype);
   }
 }
 
-export function json(data: unknown, init?: ResponseInit) {
-  return NextResponse.json(data, init);
+export function json(data: unknown, init?: ResponseInit | number) {
+  const options: ResponseInit | undefined = typeof init === 'number' ? { status: init } : init;
+  return NextResponse.json(data, options);
 }
 
 export function apiError(error: unknown) {
-  if (error instanceof ApiError) {
-    return json({ success: false, error: { code: error.code, message: error.message } }, { status: error.status });
+  if (
+    error instanceof ApiError ||
+    (error && typeof error === 'object' && ('isApiError' in error || 'status' in error))
+  ) {
+    const err = error as any;
+    return json(
+      { success: false, error: { code: err.code || 'request_error', message: err.message || 'Lỗi yêu cầu' } },
+      { status: typeof err.status === 'number' ? err.status : 400 }
+    );
   }
-  console.error('[API ERROR]', error instanceof Error ? error.message : 'Unknown error');
-  return json({ success: false, error: { code: 'internal_error', message: 'Máy chủ tạm thời không thể xử lý yêu cầu.' } }, { status: 500 });
+  const message = error instanceof Error ? error.message : 'Máy chủ tạm thời không thể xử lý yêu cầu.';
+  console.error('[API ERROR]', message);
+  return json(
+    { success: false, error: { code: 'internal_error', message: message || 'Máy chủ tạm thời không thể xử lý yêu cầu.' } },
+    { status: 500 }
+  );
 }
 
 export async function readJson(request: Request, maxBytes = 16_384): Promise<Record<string, unknown>> {

@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   const schoolId = text(form, 'school_id').trim() || undefined;
   const returnTo = safeReturnTo(text(form, 'return_to') || '/admin');
 
-  if (!/^[a-z0-9_.-]{3,64}$/.test(username) || password.length < 6 || password.length > 200) {
+  if (!/^[a-z0-9_\.\-]{3,64}$/.test(username) || password.length < 6 || password.length > 200) {
     return redirectLogin(request, 'Thông tin đăng nhập không hợp lệ. Vui lòng kiểm tra lại tên đăng nhập và mật khẩu.');
   }
 

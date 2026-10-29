@@ -117,7 +117,7 @@ export default function RegisterPage() {
               required
               minLength={3}
               maxLength={64}
-              pattern="[A-Za-z0-9_.-]+"
+              pattern="[A-Za-z0-9_\.\-]+"
               className="form-input"
               placeholder="3–64 ký tự: chữ không dấu, số, . _ -"
             />

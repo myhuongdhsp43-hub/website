@@ -119,7 +119,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               required
               minLength={3}
               maxLength={64}
-              pattern="[A-Za-z0-9_.-]+"
+              pattern="[A-Za-z0-9_\.\-]+"
               className="form-input"
               placeholder={isStudentDefault ? 'Ví dụ: hocsinh1' : 'Tên đăng nhập hoặc email'}
             />
