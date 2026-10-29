@@ -862,11 +862,11 @@ function DeviceForm({ device, students, onClose, onDone, onMessage }: { device?:
       enabled: form.get('enabled') === 'on',
     };
     try {
-      const data = await api<{ provisioning?: { device_token: string } }>('/api/devices', {
+      const data = await api<{ provisioning?: { device_token: string }; device?: { deviceToken?: string; rawToken?: string } }>('/api/devices', {
         method: device ? 'PATCH' : 'POST',
         body: JSON.stringify(body),
       });
-      onDone(data.provisioning?.device_token);
+      onDone(data.provisioning?.device_token || data.device?.deviceToken || data.device?.rawToken);
     } catch (error) {
       onMessage({ text: getError(error), kind: 'error' });
     } finally {

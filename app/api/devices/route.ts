@@ -33,8 +33,19 @@ export async function POST(request: Request) {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const deviceName = requiredText(body.device_name, 'Tên thiết bị', 120);
-    const speedLimit = boundedNumber(body.speed_limit, 10, 100, 40);
-    const verifyCode = Math.floor(100000000 + Math.random() * 900000000).toString();
+    const speedLimit = boundedNumber(body.speed_limit, 'Giới hạn tốc độ', 10, 100, true) ?? 40;
+    const userVerifyCode = optionalText(body.verify_code, 'Mã xác thực phần cứng', 32);
+    let verifyCode = '';
+    if (userVerifyCode) {
+      const clean = userVerifyCode.replace(/\D/g, '');
+      const num = parseInt(clean, 10);
+      if (num >= 1 && num <= 1_000_000_000) {
+        verifyCode = clean;
+      }
+    }
+    if (!verifyCode) {
+      verifyCode = Math.floor(100000000 + Math.random() * 900000000).toString();
+    }
     const deviceToken = `dt_${Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('')}`;
     await env.DB.batch([
       env.DB.prepare(`INSERT INTO devices (id, school_id, student_id, device_id, device_name, device_token_hash, device_token, verify_code, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
@@ -45,7 +56,11 @@ export async function POST(request: Request) {
       ),
     ]);
     await audit(context, 'device.create', 'device', id, { deviceId });
-    return json({ success: true, device: { id, deviceId, rawToken, verifyCode, deviceToken } }, { status: 201 });
+    return json({
+      success: true,
+      provisioning: { device_token: deviceToken, raw_token: rawToken, verify_code: verifyCode },
+      device: { id, deviceId, rawToken, verifyCode, deviceToken },
+    }, { status: 201 });
   } catch (error) { return apiError(error); }
 }
 
@@ -60,13 +75,23 @@ export async function PATCH(request: Request) {
     if (!device) throw new ApiError(404, 'Không tìm thấy thiết bị.', 'not_found');
     const studentId = optionalText(body.student_id, 'student_id', 64);
     if (studentId) await validateStudent(context.schoolId, studentId);
+    const userVerifyCode = optionalText(body.verify_code, 'Mã xác thực phần cứng', 32);
+    let verifyCodeUpdate: string | null = null;
+    if (userVerifyCode) {
+      const clean = userVerifyCode.replace(/\D/g, '');
+      const num = parseInt(clean, 10);
+      if (num >= 1 && num <= 1_000_000_000) {
+        verifyCodeUpdate = clean;
+      }
+    }
+    const speedLimit = boundedNumber(body.speed_limit, 'Giới hạn tốc độ', 10, 100, true) ?? 40;
     const now = new Date().toISOString();
     await env.DB.batch([
-      env.DB.prepare(`UPDATE devices SET device_name = ?, student_id = ?, enabled = ?, updated_at = ? WHERE id = ? AND school_id = ?`).bind(
-        requiredText(body.device_name, 'Tên thiết bị', 120), studentId ?? null, optionalBoolean(body.enabled, true) ? 1 : 0, now, id, context.schoolId
+      env.DB.prepare(`UPDATE devices SET device_name = ?, verify_code = COALESCE(?, verify_code), student_id = ?, enabled = ?, updated_at = ? WHERE id = ? AND school_id = ?`).bind(
+        requiredText(body.device_name, 'Tên thiết bị', 120), verifyCodeUpdate, studentId ?? null, optionalBoolean(body.enabled, true) ? 1 : 0, now, id, context.schoolId
       ),
       env.DB.prepare(`UPDATE device_configs SET speed_limit = ?, speed_alert_enabled = ?, buzzer_enabled = ?, remote_alarm = ?, version = version + 1, updated_at = ? WHERE device_id = ?`).bind(
-        boundedNumber(body.speed_limit, 10, 100, 40), optionalBoolean(body.speed_alert_enabled, true) ? 1 : 0, optionalBoolean(body.buzzer_enabled, true) ? 1 : 0, optionalBoolean(body.remote_alarm, false) ? 1 : 0, now, id
+        speedLimit, optionalBoolean(body.speed_alert_enabled, true) ? 1 : 0, optionalBoolean(body.buzzer_enabled, true) ? 1 : 0, optionalBoolean(body.remote_alarm, false) ? 1 : 0, now, id
       ),
     ]);
     await audit(context, 'device.update', 'device', id);
