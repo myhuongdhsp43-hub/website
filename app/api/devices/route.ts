@@ -71,8 +71,22 @@ export async function PATCH(request: Request) {
     await ensureSchema();
     const body = await readJson(request);
     const id = requiredText(body.id, 'id', 64);
-    const device = await env.DB.prepare('SELECT id, device_id FROM devices WHERE id = ? AND school_id = ?').bind(id, context.schoolId).first();
+    const device = await env.DB.prepare('SELECT id, device_id FROM devices WHERE id = ? AND school_id = ?').bind(id, context.schoolId).first<{ id: string; device_id: string }>();
     if (!device) throw new ApiError(404, 'Không tìm thấy thiết bị.', 'not_found');
+
+    const action = typeof body.action === 'string' ? body.action : 'config';
+    const now = new Date().toISOString();
+
+    if (action === 'remote_alarm') {
+      const config = await env.DB.prepare('SELECT remote_alarm_requested_at FROM device_configs WHERE device_id = ?').bind(id).first<{ remote_alarm_requested_at: string | null }>();
+      if (config?.remote_alarm_requested_at && Date.now() - Date.parse(config.remote_alarm_requested_at) < 15_000) {
+        throw new ApiError(429, 'Vui lòng chờ 15 giây trước khi phát cảnh báo lại.', 'cooldown');
+      }
+      await env.DB.prepare('UPDATE device_configs SET remote_alarm = 1, remote_alarm_requested_at = ?, version = version + 1, updated_at = ? WHERE device_id = ?').bind(now, now, id).run();
+      await audit(context, 'device.remote_alarm', 'device', id, { deviceId: device.device_id });
+      return json({ success: true, message: 'Đã gửi yêu cầu phát còi. Thiết bị sẽ bíp còi ở lần gửi dữ liệu tiếp theo.' });
+    }
+
     const studentId = optionalText(body.student_id, 'student_id', 64);
     if (studentId) await validateStudent(context.schoolId, studentId);
     const userVerifyCode = optionalText(body.verify_code, 'Mã xác thực phần cứng', 32);
@@ -84,8 +98,7 @@ export async function PATCH(request: Request) {
         verifyCodeUpdate = clean;
       }
     }
-    const speedLimit = boundedNumber(body.speed_limit, 'Giới hạn tốc độ', 10, 100, true) ?? 40;
-    const now = new Date().toISOString();
+    const speedLimit = boundedNumber(body.speed_limit, 'Giới hạn tốc độ', 10, 100, false) ?? 40;
     await env.DB.batch([
       env.DB.prepare(`UPDATE devices SET device_name = ?, verify_code = COALESCE(?, verify_code), student_id = ?, enabled = ?, updated_at = ? WHERE id = ? AND school_id = ?`).bind(
         requiredText(body.device_name, 'Tên thiết bị', 120), verifyCodeUpdate, studentId ?? null, optionalBoolean(body.enabled, true) ? 1 : 0, now, id, context.schoolId
@@ -95,7 +108,7 @@ export async function PATCH(request: Request) {
       ),
     ]);
     await audit(context, 'device.update', 'device', id);
-    return json({ success: true });
+    return json({ success: true, message: 'Đã cập nhật cấu hình thiết bị thành công.' });
   } catch (error) { return apiError(error); }
 }
 
