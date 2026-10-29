@@ -259,17 +259,139 @@ export function ChatView({
     e.target.value = '';
   };
 
-  // 5. Quy trình tải file trực tiếp (Chunk upload an toàn và hỗ trợ link storage.to)
+  // 5. Quy trình tải file trực tiếp (GoFile API & Direct Upload - Không qua Cloudflare, không giới hạn RAM)
   const uploadFileSecurely = async (
     att: SelectedAttachment
   ): Promise<{ fileUrl: string; fileName: string; fileSize: number; fileType: string }> => {
-    // Kích thước mỗi khối: 512KB để tối ưu tốc độ và không gây quá tải HTTP
+    setUploadProgress(5);
+    setUploadStatusText(`Chuẩn bị truyền file (${att.humanSize})...`);
+
+    // Cách 1: Đối với file <= 1GB, ưu tiên tải trực tiếp lên Litterbox để có link tải trực tiếp 100% về máy + xem ảnh ngay
+    if (att.file.size <= 1024 * 1024 * 1024) {
+      try {
+        setUploadStatusText(`Đang tải trực tiếp (${att.humanSize})...`);
+        const directResult = await new Promise<{ fileUrl: string } | null>((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', 'https://litterbox.catbox.moe/resources/internals/api.php');
+
+          xhr.upload.onprogress = (evt) => {
+            if (evt.lengthComputable) {
+              const percent = Math.min(99, Math.max(5, Math.round((evt.loaded / evt.total) * 100)));
+              setUploadProgress(percent);
+              setUploadStatusText(`Đang truyền trực tiếp (${formatBytes(evt.loaded)} / ${att.humanSize}) - ${percent}%...`);
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              const responseText = xhr.responseText?.trim();
+              if (responseText && responseText.startsWith('http')) {
+                resolve({ fileUrl: responseText });
+                return;
+              }
+            }
+            resolve(null);
+          };
+
+          xhr.onerror = () => resolve(null);
+          xhr.ontimeout = () => resolve(null);
+          xhr.timeout = 180000; // 3 phút
+
+          const formData = new FormData();
+          formData.append('reqtype', 'fileupload');
+          formData.append('time', '72h'); // 3 ngày theo yêu cầu
+          formData.append('fileToUpload', att.file, att.name);
+          xhr.send(formData);
+        });
+
+        if (directResult && directResult.fileUrl) {
+          setUploadProgress(100);
+          setUploadStatusText('Tải lên hoàn tất!');
+          return {
+            fileUrl: directResult.fileUrl,
+            fileName: att.name,
+            fileSize: att.size,
+            fileType: att.type,
+          };
+        }
+      } catch (e) {
+        console.warn('Direct upload fallback to GoFile:', e);
+      }
+    }
+
+    // Cách 2: GoFile API (Dành cho mọi kích thước file, kể cả file siêu to đến 25GB)
+    try {
+      setUploadStatusText(`Đang kết nối máy chủ GoFile...`);
+      let gofileServer = 'store-eu-par-5';
+      try {
+        const srvRes = await fetch('/api/chat/upload');
+        if (srvRes.ok) {
+          const srvData = await srvRes.json();
+          if (srvData?.gofile_server) {
+            gofileServer = srvData.gofile_server;
+          }
+        }
+      } catch {}
+
+      const uploadUrl = `https://${gofileServer}.gofile.io/uploadFile`;
+      setUploadStatusText(`Đang tải lên GoFile (${att.humanSize})...`);
+
+      const gofileResult = await new Promise<{ fileUrl: string; fileName: string; fileSize: number } | null>((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', uploadUrl);
+
+        xhr.upload.onprogress = (evt) => {
+          if (evt.lengthComputable) {
+            const percent = Math.min(99, Math.max(5, Math.round((evt.loaded / evt.total) * 100)));
+            setUploadProgress(percent);
+            setUploadStatusText(`Đang tải lên GoFile (${formatBytes(evt.loaded)} / ${att.humanSize}) - ${percent}%...`);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const resData = JSON.parse(xhr.responseText);
+              if (resData?.status === 'ok' && resData?.data?.downloadPage) {
+                resolve({
+                  fileUrl: resData.data.downloadPage,
+                  fileName: resData.data.name || att.name,
+                  fileSize: resData.data.size || att.size,
+                });
+                return;
+              }
+            } catch {}
+          }
+          resolve(null);
+        };
+
+        xhr.onerror = () => resolve(null);
+        xhr.ontimeout = () => resolve(null);
+        xhr.timeout = 600000; // 10 phút
+
+        const formData = new FormData();
+        formData.append('file', att.file, att.name);
+        xhr.send(formData);
+      });
+
+      if (gofileResult && gofileResult.fileUrl) {
+        setUploadProgress(100);
+        setUploadStatusText('Tải lên hoàn tất!');
+        return {
+          fileUrl: gofileResult.fileUrl,
+          fileName: gofileResult.fileName,
+          fileSize: gofileResult.fileSize,
+          fileType: att.type,
+        };
+      }
+    } catch (e) {
+      console.warn('GoFile direct upload fallback to chunked:', e);
+    }
+
+    // Cách 3: Fallback phân mảnh nội bộ (Nếu cả 2 dịch vụ ngoài không phản hồi)
     const CHUNK_SIZE = 512 * 1024;
     const totalChunks = Math.max(1, Math.ceil(att.file.size / CHUNK_SIZE));
     const fileId = crypto.randomUUID();
-
-    setUploadProgress(5);
-    setUploadStatusText(`Chuẩn bị truyền file (${att.humanSize})...`);
 
     for (let i = 0; i < totalChunks; i++) {
       const start = i * CHUNK_SIZE;
@@ -279,7 +401,7 @@ export function ChatView({
 
       const percent = Math.min(99, Math.max(8, Math.round(((i + 1) / totalChunks) * 100)));
       setUploadProgress(percent);
-      setUploadStatusText(`Đang truyền (${formatBytes(end)} / ${att.humanSize}) - ${percent}%...`);
+      setUploadStatusText(`Đang truyền lưu trữ (${formatBytes(end)} / ${att.humanSize}) - ${percent}%...`);
 
       const res = await fetch('/api/chat/upload', {
         method: 'POST',
@@ -803,7 +925,13 @@ export function ChatView({
                                       <span>•</span>
                                       <span className="flex items-center gap-0.5">
                                         <Clock className="h-2.5 w-2.5" />
-                                        {msg.file_url.includes('storage.to') ? 'storage.to 25GB (Hạn 7 ngày)' : 'Lưu trữ An Toàn Xe (Tải trực tiếp)'}
+                                        {msg.file_url.includes('gofile.io')
+                                          ? 'GoFile (Không giới hạn)'
+                                          : msg.file_url.includes('litter') || msg.file_url.includes('catbox')
+                                          ? 'Tải trực tiếp (Hạn 3 ngày)'
+                                          : msg.file_url.includes('storage.to')
+                                          ? 'storage.to 25GB (Hạn 7 ngày)'
+                                          : 'Lưu trữ An Toàn Xe'}
                                       </span>
                                     </div>
                                   </div>

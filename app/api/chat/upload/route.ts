@@ -20,14 +20,36 @@ function getStorageToToken(): string {
 export async function GET(request: Request) {
   try {
     await requirePasswordUser();
+
+    // Lấy server GoFile tốt nhất cho client tải trực tiếp
+    let gofileServer = 'store-eu-par-5';
+    try {
+      const srvRes = await fetch('https://api.gofile.io/servers', {
+        headers: { 'Accept': 'application/json' },
+      });
+      if (srvRes.ok) {
+        const srvData = await srvRes.json() as any;
+        if (srvData?.data?.servers?.length > 0) {
+          gofileServer = srvData.data.servers[0].name;
+        }
+      }
+    } catch {
+      // Dùng fallback server
+    }
+
     return noStore(json({
       success: true,
-      provider: 'storage.to',
+      provider: 'gofile',
+      gofile_server: gofileServer,
+      gofile_upload_url: `https://${gofileServer}.gofile.io/uploadFile`,
+      litterbox_upload_url: 'https://litterbox.catbox.moe/resources/internals/api.php',
       max_size_bytes: MAX_FILE_SIZE,
       max_size_gb: 25,
       default_expiry_days: DEFAULT_EXPIRY_DAYS,
       allowed_expiry_days: [3, 7],
       features: {
+        direct_gofile_upload: true,
+        direct_litterbox_upload: true,
         direct_chunk_upload: true,
         direct_user_download: true,
         storage_to_integration: true,
