@@ -17,7 +17,7 @@ export async function GET() {
       env.DB.prepare(`SELECT COALESCE(MAX(e.max_speed), 0) AS max_speed
         FROM overspeed_events e JOIN devices d ON d.id = e.device_id WHERE d.school_id = ?`).bind(context.schoolId).first(),
       env.DB.prepare(`SELECT COUNT(*) AS total,
-        SUM(CASE WHEN julianday(last_seen) >= julianday('now', '-90 seconds') THEN 1 ELSE 0 END) AS online
+        SUM(CASE WHEN julianday(last_seen) >= julianday('now', '-180 seconds') THEN 1 ELSE 0 END) AS online
         FROM devices WHERE school_id = ?`).bind(context.schoolId).first(),
     ]);
     return noStore(json({ success: true, daily: daily.results, students: students.results, maxSpeed: Number((speed as { max_speed?: number } | null)?.max_speed ?? 0), devices: { total: Number((status as { total?: number } | null)?.total ?? 0), online: Number((status as { online?: number } | null)?.online ?? 0) } }));

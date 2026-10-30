@@ -93,6 +93,7 @@ export default function ActivatePage() {
 
   // Hardware Status state
   const [loading, setLoading] = useState(false);
+  const [loadingStepText, setLoadingStepText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [checkingHardware, setCheckingHardware] = useState(false);
   const [copiedToken, setCopiedToken] = useState(false);
@@ -357,14 +358,6 @@ export default function ActivatePage() {
       return;
     }
 
-    // Nếu ở chế độ 4G, yêu cầu thiết bị phải online hoặc đã bấm nút
-    if (pairingMode === 'wifi_4g' && !hardwareStatus.pairingReady && !hardwareStatus.online) {
-      setError(
-        'Không thể ghép đôi! Thiết bị xe chưa bật nguồn hoặc chưa bấm nút Ghép đôi (BOOT). Hãy cấp nguồn cho xe và nhấn nút BOOT để xe gửi tín hiệu thực tế qua 4G.'
-      );
-      return;
-    }
-
     if (!studentName.trim()) {
       setError('Vui lòng nhập họ và tên học sinh.');
       return;
@@ -376,28 +369,71 @@ export default function ActivatePage() {
 
     setLoading(true);
 
-    try {
-      const response = await fetch('/api/device/activate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device_id: deviceId.trim(),
-          verify_code: verifyCode.trim(),
-          account_token: accountToken.trim() || undefined,
-          school_id: schoolId || currentUser?.schoolId || undefined,
-          student_name: studentName.trim(),
-          student_class: studentClass.trim(),
-          parent_phone: parentPhone.trim() || undefined,
-          pairing_mode: pairingMode,
-        }),
-      });
+    // Nếu ở chế độ 4G và tạm thời chưa thấy tín hiệu online, tự động dò tìm tối đa 5 lần
+    let isConnected = hardwareStatus.pairingReady || hardwareStatus.online;
+    if (pairingMode === 'wifi_4g' && !isConnected) {
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        setLoadingStepText(`Đang dò tìm tín hiệu xe (lần thử ${attempt}/5)...`);
+        try {
+          const query = new URLSearchParams();
+          if (deviceId.trim()) query.set('device_id', deviceId.trim());
+          if (verifyCode.trim()) query.set('verify_code', verifyCode.trim());
+          const res = await fetch(`/api/device/real-status?${query.toString()}`);
+          const data = await res.json();
+          if (data?.success && data?.device && (data.device.hardware_online || data.device.pairing_pending === 1)) {
+            isConnected = true;
+            break;
+          }
+        } catch (_) {}
+        if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
 
-      const resData = await response.json();
-
-      if (!response.ok || !resData.success) {
-        throw new Error(
-          resData?.error?.message || resData?.message || 'Kích hoạt thất bại. Mã xác thực phần cứng không khớp!'
+      if (!isConnected) {
+        setLoading(false);
+        setLoadingStepText('');
+        setError(
+          'Không thể ghép đôi sau 5 lần thử kết nối! Thiết bị xe chưa bật nguồn hoặc chưa bấm nút Ghép đôi (BOOT). Hãy cấp nguồn cho xe và nhấn nút BOOT để xe gửi tín hiệu thực tế qua 4G.'
         );
+        return;
+      }
+    }
+
+    try {
+      let response: Response | null = null;
+      let resData: any = null;
+      let lastErr: any = null;
+
+      // Thử gửi gói tin kích hoạt tối đa 5 lần cho đến khi thành công
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        setLoadingStepText(`Đang gửi gói tin kích hoạt xe lên hệ thống (lần ${attempt}/5)...`);
+        try {
+          response = await fetch('/api/device/activate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              device_id: deviceId.trim(),
+              verify_code: verifyCode.trim(),
+              account_token: accountToken.trim() || undefined,
+              school_id: schoolId || currentUser?.schoolId || undefined,
+              student_name: studentName.trim(),
+              student_class: studentClass.trim(),
+              parent_phone: parentPhone.trim() || undefined,
+              pairing_mode: pairingMode,
+            }),
+          });
+          resData = await response.json();
+          if (response.ok && resData?.success) {
+            break;
+          }
+          lastErr = new Error(resData?.error?.message || resData?.message || 'Kích hoạt thất bại');
+        } catch (netErr: any) {
+          lastErr = netErr;
+        }
+        if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, 1200));
+      }
+
+      if (!response || !response.ok || !resData?.success) {
+        throw (lastErr || new Error('Kích hoạt thất bại sau 5 lần thử gửi dữ liệu.'));
       }
 
       const returnedData = resData.data;
@@ -765,7 +801,7 @@ export default function ActivatePage() {
                 className="button-primary mt-2 w-full py-3 text-sm font-bold shadow-md disabled:opacity-50"
               >
                 {loading
-                  ? 'Đang xác thực & gửi API...'
+                  ? (loadingStepText || 'Đang xác thực & gửi API...')
                   : pairingMode === 'bluetooth'
                   ? 'Xác nhận & Nạp Token vào Flash qua Bluetooth'
                   : 'Xác nhận & Ghép nối xe'}

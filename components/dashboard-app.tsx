@@ -670,14 +670,24 @@ function DevicesView({ onMessage }: { onMessage: (message: { text: string; kind:
   }, [reload, onMessage]);
 
   async function remoteAlarm(id: string) {
-    if (!window.confirm('Thiết bị sẽ bíp tối đa 5 giây sau lần telemetry kế tiếp. Tiếp tục?')) return;
+    if (!window.confirm('Thiết bị sẽ bíp sau lần telemetry kế tiếp. Hệ thống sẽ thử gửi tối đa 5 lần cho đến khi kết nối thành công. Tiếp tục?')) return;
     try {
-      const result = await api<{ message: string }>('/api/devices', {
-        method: 'PATCH',
-        body: JSON.stringify({ id, action: 'remote_alarm' }),
-      });
-      onMessage({ text: result.message, kind: 'success' });
-      refresh();
+      let lastErr: any = null;
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+          const result = await api<{ message: string }>('/api/devices', {
+            method: 'PATCH',
+            body: JSON.stringify({ id, action: 'remote_alarm' }),
+          });
+          onMessage({ text: `${result.message} (Đã truyền lệnh thành công - Lần thử ${attempt}/5)`, kind: 'success' });
+          refresh();
+          return;
+        } catch (err) {
+          lastErr = err;
+          if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+      throw lastErr;
     } catch (error) {
       onMessage({ text: getError(error), kind: 'error' });
     }
