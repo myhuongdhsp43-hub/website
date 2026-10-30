@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers';
 import { ApiError, apiError, boundedNumber, json, readJson, requiredText } from '@/lib/server/http';
 import { renderSmsTemplate, sendSms } from '@/lib/server/sms';
 import { determineOverspeedTransition } from '@/lib/domain/overspeed.mjs';
-import { helmetDecision, normalizeSmsPhone, helmetSmsMessage } from '@/lib/domain/helmet.mjs';
+import { helmetDecision, normalizeSmsPhone, helmetSmsMessage, supportsHelmetSms } from '@/lib/domain/helmet.mjs';
 import { acknowledgeHelmetSms, nextHelmetSms } from '@/lib/server/helmet-sms';
 
 type DeviceRow = {
@@ -22,6 +22,7 @@ type DeviceRow = {
   helmet_worn: number | null;
   helmet_missing_since: string | null;
   helmet_alert_sent_at: string | null;
+  firmware_version: string | null;
 };
 
 type ActiveEvent = { id: string; sms_sent: number; max_speed: number };
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
     if (!/^[A-Za-z0-9_-]{3,64}$/.test(deviceId)) throw new ApiError(400, 'device_id chỉ gồm chữ, số, gạch dưới hoặc gạch ngang.', 'validation_error');
     const token = getBearerToken(request);
     const tokenHash = await sha256(token);
-    const device = await env.DB.prepare(`SELECT d.id, d.device_id, d.last_seen, d.helmet_alert_active, d.school_id, d.student_id, d.device_token_hash, d.enabled,
+    const device = await env.DB.prepare(`SELECT d.id, d.device_id, d.last_seen, d.helmet_alert_active, d.school_id, d.student_id, d.device_token_hash, d.enabled, d.firmware_version,
       c.speed_limit, c.speed_alert_enabled, c.buzzer_enabled, c.remote_alarm, c.version,
       d.helmet_worn, d.helmet_missing_since, d.helmet_alert_sent_at
       FROM devices d JOIN device_configs c ON c.device_id = d.id
@@ -69,7 +70,8 @@ export async function POST(request: Request) {
       await updateHelmetSafety(device, { speed, helmetWorn, latitude, longitude, gpsValid, recordedAt });
     }
 
-    const sms = firmwareVersion?.startsWith('2.4.') ? await nextHelmetSms(device.id, device.school_id) : {};
+    const effectiveFirmware = firmwareVersion || device.firmware_version;
+    const sms = supportsHelmetSms(effectiveFirmware) ? await nextHelmetSms(device.id, device.school_id) : {};
     return json({ success: true, config: { ...toDeviceConfig(device), ...sms } });
   } catch (error) {
     return apiError(error);

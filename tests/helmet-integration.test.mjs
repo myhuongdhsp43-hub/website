@@ -22,6 +22,12 @@ test('SMS: chuẩn hóa số VN, chặn lệnh AT chèn vào, gói tin GSM dư�
   const text = helmet.helmetSmsMessage('XE01', 12, 15.12345, 108.54321, true);
   assert.ok(text.length <= 160);
   assert.match(text, /^[\x20-\x7e]+$/);
+  assert.equal(helmet.supportsHelmetSms('2.4.0-helmet-espnow'), true);
+  assert.equal(helmet.supportsHelmetSms('2.5.1-local-overspeed-helmet-sms'), true);
+  assert.equal(helmet.supportsHelmetSms('2.7'), true);
+  assert.equal(helmet.supportsHelmetSms('2.3.9'), false);
+  assert.equal(helmet.supportsHelmetSms(null), false);
+  assert.equal(helmet.sanitizeAsciiSms('Tin nhắn kiểm tra: xe đỗ'), 'Tin nhan kiem tra: xe do');
 });
 
 async function load(path, imports) {
@@ -116,15 +122,20 @@ test('cài đặt: lưu mũ không ghi đè SMS, lưu SMS không ghi đè mũ, v
 test('SMS: chặn xe khác, yêu cầu firmware mới, giới hạn gửi thử và loại lệnh quá hạn', async () => {
   const { db, send, jobs } = await fixture();
   try {
-    const req = device_id => new Request('https://test/api/helmet-sms', { method: 'POST', body: JSON.stringify({ device_id, phone: '0901234567' }) });
+    const req = (device_id, extra = {}) => new Request('https://test/api/helmet-sms', { method: 'POST', body: JSON.stringify({ device_id, phone: '0901234567', ...extra }) });
     assert.equal((await jobs.POST(req('db'))).status, 404);
     assert.equal((await jobs.POST(req('da'))).status, 400);
     await send();
     assert.equal((await jobs.POST(req('da'))).status, 200);
     assert.equal((await jobs.POST(req('da'))).status, 429);
     db.prepare('UPDATE helmet_sms_jobs SET created_at=?').run(new Date(Date.now() - 11 * 60_000).toISOString());
+    // Test friendly device_id "XE01" and custom message
+    assert.equal((await jobs.POST(req('XE01', { message: 'Thử nghiệm SMS tùy chỉnh mũ' }))).status, 200);
+    const customJob = db.prepare('SELECT message FROM helmet_sms_jobs ORDER BY created_at DESC LIMIT 1').get();
+    assert.equal(customJob.message, 'Thu nghiem SMS tuy chinh mu');
+    db.prepare('UPDATE helmet_sms_jobs SET created_at=?').run(new Date(Date.now() - 11 * 60_000).toISOString());
     const response = await send();
     assert.equal((await response.json()).config.sms_job_id, undefined);
-    assert.equal(db.prepare('SELECT status FROM helmet_sms_jobs').get().status, 'expired');
+    assert.equal(db.prepare("SELECT status FROM helmet_sms_jobs WHERE status = 'expired'").get().status, 'expired');
   } finally { db.close(); }
 });
