@@ -5,8 +5,9 @@ export async function POST(request: Request) {
   try {
     const body = await readJson(request);
     const deviceId = requiredText(body.device_id, 'device_id', 64);
-    const token = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
-    if (!token) throw new ApiError(401, 'Thiếu bearer token.', 'device_unauthorized');
+    const authHeader = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim();
+    const token = authHeader || (typeof body.device_token === 'string' ? body.device_token.trim() : typeof body.token === 'string' ? body.token.trim() : '');
+    if (!token) throw new ApiError(401, 'Thiếu token xác thực thiết bị.', 'device_unauthorized');
     const tokenHash = await sha256(token);
     const device = await env.DB.prepare('SELECT id, enabled FROM devices WHERE device_id = ? AND device_token_hash = ?').bind(deviceId, tokenHash).first<{ id: string; enabled: number }>();
     if (!device) throw new ApiError(401, 'Thiết bị không được xác thực.', 'device_unauthorized');

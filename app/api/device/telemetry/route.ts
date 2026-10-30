@@ -27,14 +27,14 @@ type DeviceRow = {
 
 type ActiveEvent = { id: string; sms_sent: number; max_speed: number };
 
-const MAX_REQUESTS_PER_MINUTE = 40;
+const MAX_REQUESTS_PER_MINUTE = 120;
 
 export async function POST(request: Request) {
   try {
     const body = await readJson(request);
     const deviceId = requiredText(body.device_id, 'device_id', 64);
     if (!/^[A-Za-z0-9_-]{3,64}$/.test(deviceId)) throw new ApiError(400, 'device_id chỉ gồm chữ, số, gạch dưới hoặc gạch ngang.', 'validation_error');
-    const token = getBearerToken(request);
+    const token = resolveDeviceToken(request, body as Record<string, unknown>);
     const tokenHash = await sha256(token);
     const device = await env.DB.prepare(`SELECT d.id, d.device_id, d.last_seen, d.helmet_alert_active, d.school_id, d.student_id, d.device_token_hash, d.enabled, d.firmware_version,
       c.speed_limit, c.speed_alert_enabled, c.buzzer_enabled, c.remote_alarm, c.version,
@@ -183,12 +183,21 @@ function toDeviceConfig(device: DeviceRow) {
   return { speed_limit: device.speed_limit, speed_alert_enabled: Boolean(device.speed_alert_enabled), buzzer_enabled: Boolean(device.buzzer_enabled), remote_alarm: Boolean(device.remote_alarm), config_version: device.version };
 }
 
-function getBearerToken(request: Request) {
-  const value = request.headers.get('authorization');
-  if (!value?.startsWith('Bearer ')) throw new ApiError(401, 'Thiếu bearer token.', 'device_unauthorized');
-  const token = value.slice(7).trim();
-  if (token.length < 24 || token.length > 256) throw new ApiError(401, 'Bearer token không hợp lệ.', 'device_unauthorized');
-  return token;
+function resolveDeviceToken(request: Request, body?: Record<string, unknown>): string {
+  const authHeader = request.headers.get('authorization');
+  if (authHeader?.startsWith('Bearer ')) {
+    const t = authHeader.slice(7).trim();
+    if (t.length >= 24 && t.length <= 256) return t;
+  }
+  if (body) {
+    const bodyToken = typeof body.device_token === 'string' ? body.device_token.trim() : typeof body.token === 'string' ? body.token.trim() : '';
+    if (bodyToken.length >= 24 && bodyToken.length <= 256) return bodyToken;
+  }
+  const url = new URL(request.url);
+  const urlToken = (url.searchParams.get('token') || url.searchParams.get('device_token') || '').trim();
+  if (urlToken.length >= 24 && urlToken.length <= 256) return urlToken;
+
+  throw new ApiError(401, 'Thiếu token xác thực thiết bị (hỗ trợ Header Authorization, body.device_token hoặc URL ?token=).', 'device_unauthorized');
 }
 
 async function sha256(value: string) {
