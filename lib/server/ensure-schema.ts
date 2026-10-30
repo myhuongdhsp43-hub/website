@@ -27,6 +27,22 @@ export async function ensureSchema() {
     await env.DB.prepare('SELECT 1 FROM chat_conversations LIMIT 1').first();
     await env.DB.prepare('SELECT 1 FROM chat_files LIMIT 1').first();
 
+    // Auto-create shared_photos table for instant iOS/PC photo sharing
+    try {
+      await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS shared_photos (
+          id text PRIMARY KEY NOT NULL,
+          room_id text NOT NULL DEFAULT 'khkt',
+          filename text NOT NULL,
+          content_type text NOT NULL,
+          size integer NOT NULL,
+          data text NOT NULL,
+          created_at text NOT NULL
+        )
+      `).run();
+      await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_shared_photos_room ON shared_photos (room_id, created_at)').run();
+    } catch {}
+
     // Auto-backfill verify_code
     try {
       await env.DB.prepare(`

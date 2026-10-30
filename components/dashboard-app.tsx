@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
   BarChart3,
   Bell,
@@ -133,6 +134,15 @@ export function DashboardApp() {
             </h1>
           </div>
           <div className="flex items-center gap-3">
+            <Link
+              href="/drop"
+              target="_blank"
+              title="Mở trang truyền ảnh trực tiếp từ iPhone lên máy tính"
+              className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 px-3 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-100 transition shadow-sm"
+            >
+              <span>📲</span>
+              <span className="hidden sm:inline">Truyền ảnh iOS</span>
+            </Link>
             <span className="hidden rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 sm:flex">
               <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-emerald-500" />
               {userRole === 'student' ? 'Học sinh' : 'Quản lý'}
