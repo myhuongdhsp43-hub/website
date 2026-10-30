@@ -103,7 +103,7 @@ export async function GET(request: Request) {
     if (category === 'all' || category === 'command' || category === 'system') {
       let query = `
         SELECT a.id, a.user_id, a.action, a.entity, a.entity_id, a.metadata, a.created_at,
-               u.display_name AS user_name, u.email AS user_email
+               u.full_name AS user_name, u.email AS user_email
         FROM audit_logs a
         LEFT JOIN users u ON u.id = a.user_id
         WHERE a.school_id = ?
