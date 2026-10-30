@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
+  Activity,
   BarChart3,
   Bell,
   Bike,
@@ -17,15 +18,21 @@ import {
   LogOut,
   MapPinned,
   MessageSquare,
+  Pause,
+  Play,
   Plus,
   QrCode,
   RadioTower,
+  RefreshCw,
+  Search,
   Settings,
   ShieldCheck,
+  Terminal,
   Trash2,
   TriangleAlert,
   UserRound,
   Users,
+  Volume2,
   WifiOff,
   X,
 } from 'lucide-react';
@@ -33,7 +40,7 @@ import { DeviceMap, type DeviceMarker, type TrailPoint } from './device-map';
 import { HelmetSmsPanel } from './helmet-sms-panel';
 import { ChatView } from './chat-view';
 
-type View = 'overview' | 'map' | 'students' | 'devices' | 'subaccounts' | 'chat' | 'alerts' | 'history' | 'statistics' | 'settings' | 'account';
+type View = 'overview' | 'map' | 'students' | 'devices' | 'subaccounts' | 'chat' | 'alerts' | 'history' | 'statistics' | 'logs' | 'settings' | 'account';
 type DashboardDevice = { helmet_worn: number | null; helmet_detection_enabled: number; id: string; device_id: string; current_speed: number | null; speed_limit: number; gps_valid: number; last_seen: string | null; network_signal: number | null; full_name: string | null; student_code: string | null; class_name: string | null; online: number; overspeed: number };
 type DashboardData = { user: { displayName: string; email: string; role: string; schoolName: string; schoolId?: string; accountToken?: string | null }; stats: Record<'students' | 'devices' | 'online' | 'offline' | 'moving' | 'todayOverspeed' | 'weekOverspeed' | 'openAlerts', number>; devices: DashboardDevice[] };
 type Student = { id: string; student_code: string; full_name: string; class_name: string; grade: string | null; academic_year?: string | null; vehicle_plate?: string | null; notes?: string | null; active: number; device_id: string | null };
@@ -56,6 +63,7 @@ const navigation: { view: View; label: string; icon: typeof CircleGauge }[] = [
   { view: 'alerts', label: 'Cảnh báo', icon: Bell },
   { view: 'history', label: 'Lịch sử', icon: History },
   { view: 'statistics', label: 'Thống kê', icon: BarChart3 },
+  { view: 'logs', label: 'Nhật ký Live', icon: Terminal },
   { view: 'settings', label: 'Cài đặt', icon: Settings },
   { view: 'account', label: 'Tài khoản', icon: UserRound },
 ];
@@ -173,6 +181,7 @@ export function DashboardApp() {
           {view === 'alerts' ? <AlertsView onMessage={setMessage} onRefresh={refreshDashboard} /> : null}
           {view === 'history' ? <HistoryView onMessage={setMessage} /> : null}
           {view === 'statistics' ? <StatisticsView onMessage={setMessage} /> : null}
+          {view === 'logs' ? <LogsView onMessage={setMessage} /> : null}
           {view === 'settings' ? <SettingsView onMessage={setMessage} /> : null}
           {view === 'account' ? <AccountView user={dashboard?.user ?? null} onSaved={refreshDashboard} /> : null}
         </div>
@@ -1303,6 +1312,356 @@ function StatisticsView({ onMessage }: { onMessage: (message: { text: string; ki
           )}
         </div>
       </FormBox>
+    </div>
+  );
+}
+
+type LogItem = {
+  id: string;
+  timestamp: string;
+  category: 'telemetry' | 'command' | 'alert' | 'system';
+  level: 'info' | 'success' | 'warning' | 'error';
+  deviceId: string;
+  deviceName?: string | null;
+  studentName?: string | null;
+  title: string;
+  message: string;
+  details: Record<string, unknown>;
+};
+
+function LogsView({ onMessage }: { onMessage: (message: { text: string; kind: 'success' | 'error' }) => void }) {
+  const [logs, setLogs] = useState<LogItem[] | null>(null);
+  const [category, setCategory] = useState<'all' | 'telemetry' | 'command' | 'alert'>('all');
+  const [search, setSearch] = useState('');
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [triggeringAlarm, setTriggeringAlarm] = useState(false);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [devicesList, setDevicesList] = useState<Array<{ id: string; device_id: string; device_name: string }>>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+
+  const fetchLogs = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    try {
+      const data = await api<{ logs: LogItem[] }>(`/api/logs?category=${category}&limit=120`);
+      setLogs(data.logs);
+    } catch (error) {
+      onMessage({ text: getError(error), kind: 'error' });
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  }, [category, onMessage]);
+
+  useEffect(() => {
+    void api<{ devices: Array<{ id: string; device_id: string; device_name: string }> }>('/api/devices')
+      .then((data) => {
+        setDevicesList(data.devices || []);
+        if (data.devices?.length && !selectedDeviceId) {
+          setSelectedDeviceId(data.devices[0].device_id);
+        }
+      })
+      .catch(() => {});
+  }, [selectedDeviceId]);
+
+  useEffect(() => {
+    void fetchLogs(true);
+  }, [fetchLogs]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const interval = window.setInterval(() => {
+      void fetchLogs(false);
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [autoRefresh, fetchLogs]);
+
+  async function handleTestAlarm() {
+    const dev = devicesList.find((d) => d.device_id === selectedDeviceId) || devicesList[0];
+    if (!dev) {
+      onMessage({ text: 'Chưa có thiết bị nào trong hệ thống.', kind: 'error' });
+      return;
+    }
+    setTriggeringAlarm(true);
+    try {
+      let lastErr: unknown = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const res = await api<{ message: string }>('/api/devices', {
+            method: 'PATCH',
+            body: JSON.stringify({ id: dev.id, action: 'remote_alarm' }),
+          });
+          onMessage({
+            text: `[LỆNH WEB] ${res.message} (Đã gửi tới ${dev.device_id})`,
+            kind: 'success',
+          });
+          await fetchLogs(false);
+          return;
+        } catch (err) {
+          lastErr = err;
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 600));
+        }
+      }
+      throw lastErr;
+    } catch (err) {
+      onMessage({ text: getError(err), kind: 'error' });
+    } finally {
+      setTriggeringAlarm(false);
+    }
+  }
+
+  const filteredLogs = (logs || []).filter((log) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (
+      log.deviceId.toLowerCase().includes(q) ||
+      (log.deviceName && log.deviceName.toLowerCase().includes(q)) ||
+      (log.studentName && log.studentName.toLowerCase().includes(q)) ||
+      log.title.toLowerCase().includes(q) ||
+      log.message.toLowerCase().includes(q) ||
+      log.category.toLowerCase().includes(q)
+    );
+  });
+
+  return (
+    <div className="space-y-5">
+      <SectionHeading
+        title="Nhật ký hoạt động thiết bị & web (Live Logs)"
+        detail="Theo dõi luồng gói tin 4G gửi từ xe (vận tốc, GPS, sóng GSM), các lệnh phát còi/cấu hình từ Web và cảnh báo an toàn."
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                autoRefresh
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-muted text-muted-foreground'
+              }`}
+            >
+              {autoRefresh ? (
+                <>
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+                  </span>
+                  <Pause className="h-3.5 w-3.5" /> Tự động cập nhật 3s
+                </>
+              ) : (
+                <>
+                  <Play className="h-3.5 w-3.5" /> Bị tạm dừng
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => void fetchLogs(true)}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold hover:bg-muted"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+              Làm mới
+            </button>
+          </div>
+        }
+      />
+
+      {/* Quick Test Bar */}
+      <div className="flex flex-col gap-3 rounded-xl border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Volume2 className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold">Thử nghiệm gửi lệnh phát còi xe</h3>
+            <p className="text-xs text-muted-foreground">
+              Bấm nút để gửi lệnh phát còi qua 4G và quan sát dòng log phản hồi ngay lập tức bên dưới.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {devicesList.length > 0 ? (
+            <select
+              value={selectedDeviceId}
+              onChange={(e) => setSelectedDeviceId(e.target.value)}
+              className="rounded-lg border bg-background px-3 py-1.5 text-xs font-medium"
+            >
+              {devicesList.map((d) => (
+                <option key={d.id} value={d.device_id}>
+                  {d.device_id} ({d.device_name || 'Xe'})
+                </option>
+              ))}
+            </select>
+          ) : null}
+          <button
+            onClick={() => void handleTestAlarm()}
+            disabled={triggeringAlarm || !devicesList.length}
+            className="button-primary inline-flex items-center gap-1.5 text-xs"
+          >
+            {triggeringAlarm ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Volume2 className="h-3.5 w-3.5" />}
+            {triggeringAlarm ? 'Đang gửi...' : 'Phát còi ngay'}
+          </button>
+        </div>
+      </div>
+
+      {/* Filter and Search Bar */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            onClick={() => setCategory('all')}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              category === 'all' ? 'bg-primary text-primary-foreground shadow-sm' : 'border hover:bg-muted'
+            }`}
+          >
+            Tất cả ({logs?.length ?? 0})
+          </button>
+          <button
+            onClick={() => setCategory('telemetry')}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              category === 'telemetry' ? 'bg-emerald-600 text-white shadow-sm' : 'border hover:bg-muted'
+            }`}
+          >
+            Gói tin Xe 4G
+          </button>
+          <button
+            onClick={() => setCategory('command')}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              category === 'command' ? 'bg-indigo-600 text-white shadow-sm' : 'border hover:bg-muted'
+            }`}
+          >
+            Lệnh điều khiển Web
+          </button>
+          <button
+            onClick={() => setCategory('alert')}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              category === 'alert' ? 'bg-rose-600 text-white shadow-sm' : 'border hover:bg-muted'
+            }`}
+          >
+            Cảnh báo
+          </button>
+        </div>
+
+        <div className="relative min-w-56">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Tìm mã xe, nội dung, tốc độ..."
+            className="w-full rounded-lg border bg-background py-1.5 pl-8 pr-3 text-xs"
+          />
+        </div>
+      </div>
+
+      {/* Logs Feed */}
+      {logs ? (
+        filteredLogs.length > 0 ? (
+          <div className="space-y-2.5">
+            {filteredLogs.map((log) => {
+              const isExpanded = expandedLogId === log.id;
+              const dateObj = new Date(log.timestamp);
+              const formattedTime = !isNaN(dateObj.getTime())
+                ? dateObj.toLocaleTimeString('vi-VN', { hour12: false }) + ' ' + dateObj.toLocaleDateString('vi-VN')
+                : log.timestamp;
+
+              let badgeStyle = 'border-slate-500/30 bg-slate-500/10 text-slate-700 dark:text-slate-300';
+              let categoryLabel = 'HỆ THỐNG';
+              if (log.category === 'telemetry') {
+                badgeStyle = 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+                categoryLabel = '4G TELEMETRY';
+              } else if (log.category === 'command') {
+                badgeStyle = 'border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300';
+                categoryLabel = 'LỆNH WEB';
+              } else if (log.category === 'alert') {
+                badgeStyle = 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300';
+                categoryLabel = 'CẢNH BÁO';
+              }
+
+              return (
+                <div
+                  key={log.id}
+                  className="rounded-xl border bg-card p-3.5 text-xs shadow-sm transition hover:border-primary/40"
+                >
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-md border px-2 py-0.5 font-mono text-[11px] font-bold ${badgeStyle}`}>
+                        {categoryLabel}
+                      </span>
+                      {log.deviceId ? (
+                        <span className="rounded-md bg-muted px-2 py-0.5 font-mono font-semibold text-foreground">
+                          {log.deviceId}
+                          {log.studentName ? ` · ${log.studentName}` : ''}
+                        </span>
+                      ) : null}
+                      <span className="font-semibold text-foreground">{log.title}</span>
+                    </div>
+                    <span className="font-mono text-[11px] text-muted-foreground">{formattedTime}</span>
+                  </div>
+
+                  <p className="mt-1.5 text-muted-foreground">{log.message}</p>
+
+                  {/* Telemetry quick metrics pills */}
+                  {log.category === 'telemetry' && log.details ? (
+                    <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                      {typeof log.details.speed === 'number' ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono">
+                          ⚡ Vận tốc: <strong>{Number(log.details.speed).toFixed(1)} km/h</strong>
+                        </span>
+                      ) : null}
+                      {log.details.gps_valid ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-emerald-600 dark:text-emerald-400">
+                          🛰️ GPS: Khóa ({Number(log.details.satellites ?? 0)} vệ tinh)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-amber-600 dark:text-amber-400">
+                          🛰️ GPS: Đang dò sóng
+                        </span>
+                      )}
+                      {log.details.network_signal ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-blue-500/10 px-1.5 py-0.5 font-mono text-blue-600 dark:text-blue-400">
+                          📶 Sóng: {Number(log.details.network_signal)}/31 CSQ
+                        </span>
+                      ) : null}
+                      {log.details.latitude && log.details.longitude ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-muted-foreground">
+                          📍 {Number(log.details.latitude).toFixed(4)}, {Number(log.details.longitude).toFixed(4)}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {/* Toggle Raw JSON */}
+                  <div className="mt-2.5 flex items-center justify-between border-t pt-2 text-[11px]">
+                    <button
+                      onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                      className="text-primary hover:underline"
+                    >
+                      {isExpanded ? 'Ẩn gói tin kỹ thuật ▲' : 'Xem gói tin kỹ thuật chi tiết (JSON) ▼'}
+                    </button>
+                    {log.details?.sample_id ? (
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        ID: {String(log.details.sample_id)}
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {isExpanded ? (
+                    <div className="mt-2 rounded-lg bg-muted/60 p-2.5 font-mono text-[11px] text-foreground">
+                      <pre className="overflow-x-auto whitespace-pre-wrap">{JSON.stringify(log.details, null, 2)}</pre>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <Empty
+            title="Không tìm thấy nhật ký phù hợp"
+            detail={
+              search ? 'Không có bản ghi nào khớp với từ khóa tìm kiếm.' : 'Chưa có nhật ký trong danh mục này.'
+            }
+          />
+        )
+      ) : (
+        <LoadingScreen />
+      )}
     </div>
   );
 }

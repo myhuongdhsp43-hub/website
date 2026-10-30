@@ -79,11 +79,11 @@ export async function PATCH(request: Request) {
 
     if (action === 'remote_alarm') {
       const config = await env.DB.prepare('SELECT remote_alarm_requested_at FROM device_configs WHERE device_id = ?').bind(id).first<{ remote_alarm_requested_at: string | null }>();
-      if (config?.remote_alarm_requested_at && Date.now() - Date.parse(config.remote_alarm_requested_at) < 15_000) {
-        throw new ApiError(429, 'Vui lòng chờ 15 giây trước khi phát cảnh báo lại.', 'cooldown');
+      if (config?.remote_alarm_requested_at && Date.now() - Date.parse(config.remote_alarm_requested_at) < 3_000) {
+        throw new ApiError(429, 'Vui lòng chờ 3 giây trước khi phát cảnh báo lại.', 'cooldown');
       }
       await env.DB.prepare('UPDATE device_configs SET remote_alarm = 1, remote_alarm_requested_at = ?, version = version + 1, updated_at = ? WHERE device_id = ?').bind(now, now, id).run();
-      await audit(context, 'device.remote_alarm', 'device', id, { deviceId: device.device_id });
+      await audit(context, 'device.remote_alarm', 'device', id, { deviceId: device.device_id, trigger: 'web_dashboard', requested_at: now });
       return json({ success: true, message: 'Đã gửi yêu cầu phát còi. Thiết bị sẽ bíp còi ở lần gửi dữ liệu tiếp theo.' });
     }
 
