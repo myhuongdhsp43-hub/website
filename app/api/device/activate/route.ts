@@ -127,9 +127,9 @@ export async function POST(request: Request) {
     if (pairingMode === 'wifi_4g') {
       const nowMs = Date.now();
       const requestedAtMs = device.pairing_requested_at ? new Date(device.pairing_requested_at).getTime() : 0;
-      const isPairingFresh = device.pairing_pending === 1 && (nowMs - requestedAtMs < 15 * 60 * 1000);
+      const isPairingFresh = device.pairing_pending === 1 && (nowMs - requestedAtMs < 60 * 60 * 1000);
       const lastSeenMs = device.last_seen ? new Date(device.last_seen).getTime() : 0;
-      const isRecentlyActive = (nowMs - lastSeenMs < 5 * 60 * 1000);
+      const isRecentlyActive = (nowMs - lastSeenMs < 60 * 60 * 1000);
 
       if (!isPairingFresh && !isRecentlyActive) {
         throw new ApiError(
