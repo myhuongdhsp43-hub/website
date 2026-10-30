@@ -72,7 +72,15 @@ export async function POST(request: Request) {
 
     const effectiveFirmware = firmwareVersion || device.firmware_version;
     const sms = supportsHelmetSms(effectiveFirmware) ? await nextHelmetSms(device.id, device.school_id) : {};
-    return json({ success: true, config: { ...toDeviceConfig(device), ...sms } });
+    const configResponse = toDeviceConfig(device);
+
+    // Tự động giải phóng remote_alarm về 0 ngay khi gửi lệnh cho xe, tránh xe bị kẹt lặp còi gây sụt nguồn/brownout
+    if (device.remote_alarm) {
+      const now = new Date().toISOString();
+      await env.DB.prepare('UPDATE device_configs SET remote_alarm = 0, updated_at = ? WHERE device_id = ?').bind(now, device.id).run();
+    }
+
+    return json({ success: true, config: { ...configResponse, ...sms } });
   } catch (error) {
     return apiError(error);
   }
