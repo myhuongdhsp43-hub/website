@@ -142,7 +142,11 @@ export async function GET(request: Request) {
         let message = `Người thực hiện: ${r.user_name || r.user_email || 'Hệ thống'}`;
         let level: UnifiedLog['level'] = 'info';
 
-        if (isAlarm) {
+        if (r.action === 'device.alarm_sounded') {
+          title = `XÁC NHẬN: Xe ${targetDeviceId || 'Xe'} ĐÃ PHÁT CÒI THÀNH CÔNG!`;
+          message = `Phần cứng ESP32 đã kích hoạt còi báo động và gửi tín hiệu phản hồi xác nhận qua 4G về máy chủ.`;
+          level = 'success';
+        } else if (isAlarm) {
           title = `Lệnh điều khiển: PHÁT CÒI TỪ XA (${targetDeviceId || 'Xe'})`;
           message = `Gửi tín hiệu còi khẩn cấp qua 4G tới xe ${targetDeviceId || ''}. Thiết bị sẽ hú còi ở chu kỳ đồng bộ.`;
           level = 'warning';

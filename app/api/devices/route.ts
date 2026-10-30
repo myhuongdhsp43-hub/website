@@ -9,7 +9,7 @@ export async function GET() {
     await ensureSchema();
     const schoolRow = await env.DB.prepare('SELECT account_token FROM schools WHERE id = ?').bind(context.schoolId).first<{ account_token: string | null }>();
     const devices = await env.DB.prepare(`SELECT d.id, d.device_id, d.device_name, d.verify_code, d.device_token, d.student_id, d.enabled, d.last_seen, d.current_speed, d.gps_valid, d.network_signal, d.firmware_version,
-      c.speed_limit, c.speed_alert_enabled, c.buzzer_enabled, c.remote_alarm, c.version, s.full_name, s.student_code, s.class_name
+      c.speed_limit, c.speed_alert_enabled, c.buzzer_enabled, c.remote_alarm, c.remote_alarm_requested_at, c.last_alarm_sounded_at, c.version, s.full_name, s.student_code, s.class_name
       FROM devices d JOIN device_configs c ON c.device_id = d.id
       LEFT JOIN students s ON s.id = d.student_id AND s.school_id = d.school_id
       WHERE d.school_id = ? ORDER BY d.device_id`).bind(context.schoolId).all();

@@ -43,6 +43,11 @@ export async function ensureSchema() {
       await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_shared_photos_room ON shared_photos (room_id, created_at)').run();
     } catch {}
 
+    // Ensure last_alarm_sounded_at column in device_configs
+    try {
+      await env.DB.prepare('ALTER TABLE device_configs ADD last_alarm_sounded_at TEXT').run();
+    } catch {}
+
     // Auto-backfill verify_code
     try {
       await env.DB.prepare(`

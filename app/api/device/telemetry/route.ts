@@ -70,6 +70,24 @@ export async function POST(request: Request) {
       await updateHelmetSafety(device, { speed, helmetWorn, latitude, longitude, gpsValid, recordedAt });
     }
 
+    // Ghi nhận phản hồi xác nhận còi đã kêu thành công từ thiết bị phần cứng
+    if (body.alarm_sounded === true || body.remote_alarm_acknowledged === true) {
+      const ackNow = new Date().toISOString();
+      await env.DB.batch([
+        env.DB.prepare('UPDATE device_configs SET last_alarm_sounded_at = ?, updated_at = ? WHERE device_id = ?').bind(ackNow, ackNow, device.id),
+        env.DB.prepare(`
+          INSERT INTO audit_logs (id, school_id, user_id, action, entity, entity_id, metadata, created_at)
+          VALUES (?, ?, 'system', 'device.alarm_sounded', 'device', ?, ?, ?)
+        `).bind(
+          crypto.randomUUID(),
+          device.school_id,
+          device.id,
+          JSON.stringify({ deviceId: device.device_id, status: 'sounded_success', sounded_at: ackNow }),
+          ackNow
+        ),
+      ]);
+    }
+
     const effectiveFirmware = firmwareVersion || device.firmware_version;
     const sms = supportsHelmetSms(effectiveFirmware) ? await nextHelmetSms(device.id, device.school_id) : {};
     const configResponse = toDeviceConfig(device);

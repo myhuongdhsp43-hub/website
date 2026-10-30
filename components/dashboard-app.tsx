@@ -1339,12 +1339,36 @@ function LogsView({ onMessage }: { onMessage: (message: { text: string; kind: 's
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [devicesList, setDevicesList] = useState<Array<{ id: string; device_id: string; device_name: string }>>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [alarmFeedback, setAlarmFeedback] = useState<{
+    status: 'idle' | 'waiting' | 'confirmed';
+    deviceId: string;
+    requestedAt?: number;
+    confirmedAt?: string;
+  }>({ status: 'idle', deviceId: '' });
 
   const fetchLogs = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
     try {
       const data = await api<{ logs: LogItem[] }>(`/api/logs?category=${category}&limit=120`);
       setLogs(data.logs);
+      setAlarmFeedback((prev) => {
+        if (prev.status === 'waiting' && prev.requestedAt) {
+          const ackLog = data.logs.find(
+            (l) =>
+              l.deviceId === prev.deviceId &&
+              (l.title.includes('XÁC NHẬN') || l.details?.action === 'device.alarm_sounded') &&
+              Date.parse(l.timestamp) >= prev.requestedAt! - 3000
+          );
+          if (ackLog) {
+            return {
+              status: 'confirmed',
+              deviceId: prev.deviceId,
+              confirmedAt: ackLog.timestamp,
+            };
+          }
+        }
+        return prev;
+      });
     } catch (error) {
       onMessage({ text: getError(error), kind: 'error' });
     } finally {
@@ -1382,6 +1406,7 @@ function LogsView({ onMessage }: { onMessage: (message: { text: string; kind: 's
       return;
     }
     setTriggeringAlarm(true);
+    setAlarmFeedback({ status: 'waiting', deviceId: dev.device_id, requestedAt: Date.now() });
     try {
       let lastErr: unknown = null;
       for (let attempt = 1; attempt <= 3; attempt++) {
@@ -1403,6 +1428,7 @@ function LogsView({ onMessage }: { onMessage: (message: { text: string; kind: 's
       }
       throw lastErr;
     } catch (err) {
+      setAlarmFeedback({ status: 'idle', deviceId: '' });
       onMessage({ text: getError(err), kind: 'error' });
     } finally {
       setTriggeringAlarm(false);
@@ -1500,6 +1526,33 @@ function LogsView({ onMessage }: { onMessage: (message: { text: string; kind: 's
           </button>
         </div>
       </div>
+
+      {/* Alarm Feedback Banner */}
+      {alarmFeedback.status === 'waiting' ? (
+        <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-300">
+          <LoaderCircle className="h-4 w-4 animate-spin shrink-0 text-amber-500" />
+          <span>
+            Đã phát lệnh qua 4G tới xe <strong>{alarmFeedback.deviceId}</strong>. Đang đợi xe nhận gói tin, hú còi và gửi xác nhận về hệ thống...
+          </span>
+        </div>
+      ) : alarmFeedback.status === 'confirmed' ? (
+        <div className="flex items-center justify-between rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-4 py-3 text-xs text-emerald-800 dark:text-emerald-200 shadow-sm animate-in fade-in duration-300">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500 text-white shrink-0">
+              <Check className="h-3.5 w-3.5 font-bold" />
+            </div>
+            <span>
+              <strong>XÁC NHẬN PHẢN HỒI THÀNH CÔNG:</strong> Xe <strong>{alarmFeedback.deviceId}</strong> đã phát còi lúc {new Date(alarmFeedback.confirmedAt || '').toLocaleTimeString('vi-VN')}!
+            </span>
+          </div>
+          <button
+            onClick={() => setAlarmFeedback({ status: 'idle', deviceId: '' })}
+            className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 underline hover:no-underline ml-2"
+          >
+            Đóng
+          </button>
+        </div>
+      ) : null}
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
