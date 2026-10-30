@@ -11,15 +11,15 @@ export async function GET() {
     const [studentCount, deviceCount, onlineCount, movingCount, todayEvents, weekEvents, unresolvedAlerts, rows, schoolRow] = await Promise.all([
       scalar('SELECT COUNT(*) AS value FROM students WHERE school_id = ? AND active = 1', context.schoolId),
       scalar('SELECT COUNT(*) AS value FROM devices WHERE school_id = ?', context.schoolId),
-      scalar("SELECT COUNT(*) AS value FROM devices WHERE school_id = ? AND julianday(last_seen) >= julianday('now', '-30 seconds')", context.schoolId),
-      scalar('SELECT COUNT(*) AS value FROM devices WHERE school_id = ? AND current_speed >= 5 AND julianday(last_seen) >= julianday(\'now\', \'-30 seconds\')', context.schoolId),
+      scalar("SELECT COUNT(*) AS value FROM devices WHERE school_id = ? AND julianday(last_seen) >= julianday('now', '-90 seconds')", context.schoolId),
+      scalar('SELECT COUNT(*) AS value FROM devices WHERE school_id = ? AND current_speed >= 5 AND julianday(last_seen) >= julianday(\'now\', \'-90 seconds\')', context.schoolId),
       scalar('SELECT COUNT(*) AS value FROM overspeed_events e JOIN devices d ON d.id = e.device_id WHERE d.school_id = ? AND e.started_at >= ?', context.schoolId, dayStart),
       scalar('SELECT COUNT(*) AS value FROM overspeed_events e JOIN devices d ON d.id = e.device_id WHERE d.school_id = ? AND e.started_at >= ?', context.schoolId, weekStart),
       scalar("SELECT COUNT(*) AS value FROM alerts WHERE school_id = ? AND status = 'open'", context.schoolId),
       env.DB.prepare(`SELECT d.id, d.device_id, d.device_name, d.verify_code, d.device_token, d.current_speed, d.gps_valid, d.last_seen, d.network_signal,
         d.helmet_worn, COALESCE(h.helmet_detection_enabled, 0) AS helmet_detection_enabled,
         c.speed_limit, s.id AS student_id, s.full_name, s.student_code, s.class_name,
-        CASE WHEN julianday(d.last_seen) >= julianday('now', '-30 seconds') THEN 1 ELSE 0 END AS online,
+        CASE WHEN julianday(d.last_seen) >= julianday('now', '-90 seconds') THEN 1 ELSE 0 END AS online,
         CASE WHEN d.active_overspeed_event_id IS NOT NULL THEN 1 ELSE 0 END AS overspeed
         FROM devices d LEFT JOIN students s ON s.id = d.student_id AND s.school_id = d.school_id JOIN device_configs c ON c.device_id = d.id
         LEFT JOIN system_settings h ON h.school_id = d.school_id

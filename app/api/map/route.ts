@@ -8,7 +8,7 @@ export async function GET() {
     const [markers, trailRows] = await Promise.all([
       env.DB.prepare(`SELECT d.id, d.device_id, d.last_latitude AS latitude, d.last_longitude AS longitude, d.current_speed, d.last_seen, d.gps_valid,
       c.speed_limit, s.full_name, s.student_code, s.class_name,
-      CASE WHEN julianday(d.last_seen) >= julianday('now', '-30 seconds') THEN 1 ELSE 0 END AS online,
+      CASE WHEN julianday(d.last_seen) >= julianday('now', '-90 seconds') THEN 1 ELSE 0 END AS online,
       CASE WHEN d.active_overspeed_event_id IS NOT NULL THEN 1 ELSE 0 END AS overspeed
       FROM devices d JOIN device_configs c ON c.device_id = d.id LEFT JOIN students s ON s.id = d.student_id AND s.school_id = d.school_id
       WHERE d.school_id = ? AND d.gps_valid = 1 AND d.last_latitude IS NOT NULL AND d.last_longitude IS NOT NULL`).bind(context.schoolId).all(),
