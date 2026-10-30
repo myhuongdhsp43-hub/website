@@ -392,7 +392,7 @@ export default function ActivatePage() {
         setLoading(false);
         setLoadingStepText('');
         setError(
-          'Không thể ghép đôi sau 5 lần thử kết nối! Thiết bị xe chưa bật nguồn hoặc chưa bấm nút Ghép đôi (BOOT). Hãy cấp nguồn cho xe và nhấn nút BOOT để xe gửi tín hiệu thực tế qua 4G.'
+          'Không thể ghép đôi sau 5 lần thử kết nối! Thiết bị xe chưa bật nguồn hoặc chưa bắt được sóng 4G. Hãy cấp nguồn cho xe và đợi 10-15 giây để xe tự động truyền tín hiệu qua 4G.'
         );
         return;
       }
@@ -705,8 +705,7 @@ export default function ActivatePage() {
                   <Radio className="h-4 w-4 text-emerald-600" /> Ghép nối qua đường truyền 4G / LTE
                 </p>
                 <p className="mt-1 leading-relaxed">
-                  1. Cấp nguồn cho bo mạch xe. 2. Nhấn nút <strong>BOOT (GPIO9)</strong> trên bo mạch ESP32. 3. Quét mã QR
-                  hoặc bấm xác nhận bên dưới.
+                  1. Cấp nguồn cho bo mạch xe (xe tự động phát tín hiệu 4G, không cần nhấn nút). 2. Quét mã QR hoặc nhập thông tin học sinh bên dưới để hoàn tất.
                 </p>
 
                 {/* Trạng thái phần cứng thực tế */}

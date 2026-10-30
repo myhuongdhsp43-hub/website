@@ -77,17 +77,17 @@ export async function GET(request: Request) {
     const tokenSynced = Boolean(device.token_synced_at) || (isPaired && isRecentlyActive);
 
     let statusLabel: 'ONLINE' | 'OFFLINE' | 'PAIRING_READY' | 'TOKEN_SYNCED' = 'OFFLINE';
-    let statusMessage = 'Chưa nhận được tín hiệu từ xe. Vui lòng bật nguồn và nhấn nút BOOT trên xe để kết nối thật.';
+    let statusMessage = 'Chưa nhận được tín hiệu từ xe. Vui lòng cấp nguồn cho xe để kết nối thực tế.';
 
     if (tokenSynced) {
       statusLabel = 'TOKEN_SYNCED';
       statusMessage = 'Thiết bị đã kết nối REAL-TIME! Bo mạch đã nạp token vào bộ nhớ Flash NVS và đang hoạt động.';
     } else if (isPairingFresh) {
       statusLabel = 'PAIRING_READY';
-      statusMessage = 'Đã nhận được tín hiệu 4G từ nút BOOT trên xe! Sẵn sàng ghép đôi ngay.';
+      statusMessage = 'Đã nhận được tín hiệu 4G từ xe! Sẵn sàng ghép đôi ngay.';
     } else if (hardwareOnline) {
       statusLabel = 'ONLINE';
-      statusMessage = 'Thiết bị đang hoạt động trên mạng 4G. Vui lòng nhấn nút BOOT trên xe để kích hoạt chế độ ghép đôi.';
+      statusMessage = 'Thiết bị đang hoạt động trên mạng 4G. Sẵn sàng ghép đôi ngay.';
     }
 
     return json({
