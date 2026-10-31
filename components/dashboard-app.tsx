@@ -1542,7 +1542,7 @@ function LogsView({ onMessage }: { onMessage: (message: { text: string; kind: 's
               <Check className="h-3.5 w-3.5 font-bold" />
             </div>
             <span>
-              <strong>XÁC NHẬN PHẢN HỒI THÀNH CÔNG:</strong> Xe <strong>{alarmFeedback.deviceId}</strong> đã phát còi lúc {new Date(alarmFeedback.confirmedAt || '').toLocaleTimeString('vi-VN')}!
+              <strong>THIẾT BỊ ĐÃ BÁO KÍCH HOẠT CÒI:</strong> Xe <strong>{alarmFeedback.deviceId}</strong> lúc {new Date(alarmFeedback.confirmedAt || '').toLocaleTimeString('vi-VN')}. Cần kiểm tra thực tế để xác nhận có âm thanh.
             </span>
           </div>
           <button

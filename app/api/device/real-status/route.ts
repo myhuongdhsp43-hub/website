@@ -70,7 +70,7 @@ export async function GET(request: Request) {
     const requestedAtMs = device.pairing_requested_at ? new Date(device.pairing_requested_at).getTime() : 0;
     const isPairingFresh = device.pairing_pending === 1 && (nowMs - requestedAtMs < 60 * 60 * 1000);
     const lastSeenMs = device.last_seen ? new Date(device.last_seen).getTime() : 0;
-    const isRecentlyActive = (nowMs - lastSeenMs < 60 * 60 * 1000);
+    const isRecentlyActive = (nowMs - lastSeenMs < 2 * 60 * 1000);
 
     const hardwareOnline = isPairingFresh || isRecentlyActive;
     const isPaired = Boolean(device.student_id);

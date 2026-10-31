@@ -9,9 +9,10 @@
       "binding": "DB",
       "database_name": "antoanxe-hocsinh-db",
       "database_id": "a51fcd31-a773-453e-accc-3119659bb60c",
-      "migrations_dir": "drizzle",
-    },
+      "migrations_dir": "drizzle"
+    }
   ],
+  "vars": {
+    "MASTER_ADMIN_KEY": "Admin123@"
+  }
 }
-
-

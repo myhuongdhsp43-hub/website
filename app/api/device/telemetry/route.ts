@@ -18,6 +18,7 @@ type DeviceRow = {
   speed_alert_enabled: number;
   buzzer_enabled: number;
   remote_alarm: number;
+  remote_alarm_requested_at: string | null;
   version: number;
   helmet_worn: number | null;
   helmet_missing_since: string | null;
@@ -37,7 +38,7 @@ export async function POST(request: Request) {
     const token = resolveDeviceToken(request, body as Record<string, unknown>);
     const tokenHash = await sha256(token);
     const device = await env.DB.prepare(`SELECT d.id, d.device_id, d.last_seen, d.helmet_alert_active, d.school_id, d.student_id, d.device_token_hash, d.enabled, d.firmware_version,
-      c.speed_limit, c.speed_alert_enabled, c.buzzer_enabled, c.remote_alarm, c.version,
+      c.speed_limit, c.speed_alert_enabled, c.buzzer_enabled, c.remote_alarm, c.remote_alarm_requested_at, c.version,
       d.helmet_worn, d.helmet_missing_since, d.helmet_alert_sent_at
       FROM devices d JOIN device_configs c ON c.device_id = d.id
       WHERE d.device_id = ? AND d.device_token_hash = ?`).bind(deviceId, tokenHash).first<DeviceRow>();
@@ -52,7 +53,8 @@ export async function POST(request: Request) {
     const longitude = boundedNumber(body.longitude, 'longitude', -180, 180, gpsValid);
     const satellites = boundedNumber(body.satellites, 'satellites', 0, 99, false);
     const hdop = boundedNumber(body.hdop, 'hdop', 0, 99.9, false);
-    const networkSignal = boundedNumber(body.network_signal, 'network_signal', 0, 31, false);
+    // 99 is the modem's "unknown" signal, not a validation error.
+    const networkSignal = body.network_signal === 99 ? null : boundedNumber(body.network_signal, 'network_signal', 0, 31, false);
     const overspeedActive = requiredBoolean(body.overspeed_active, 'overspeed_active');
     const helmetWorn = typeof body.helmet_worn === 'boolean' ? body.helmet_worn : null;
     const sampleId = requiredText(body.sample_id, 'sample_id', 80);
@@ -70,34 +72,40 @@ export async function POST(request: Request) {
       await updateHelmetSafety(device, { speed, helmetWorn, latitude, longitude, gpsValid, recordedAt });
     }
 
-    // Ghi nhận phản hồi xác nhận còi đã kêu thành công từ thiết bị phần cứng
-    if (body.alarm_sounded === true || body.remote_alarm_acknowledged === true) {
+    // Only a matching command ID can clear a pending alarm. A late ACK must
+    // never clear a newer request.
+    const alarmAckId = typeof body.alarm_request_id === 'string' ? body.alarm_request_id : '';
+    if ((body.alarm_sounded === true || body.remote_alarm_acknowledged === true) && alarmAckId) {
       const ackNow = new Date().toISOString();
-      await env.DB.batch([
-        env.DB.prepare('UPDATE device_configs SET last_alarm_sounded_at = ?, updated_at = ? WHERE device_id = ?').bind(ackNow, ackNow, device.id),
-        env.DB.prepare(`
+      const result = await env.DB.prepare('UPDATE device_configs SET remote_alarm = 0, last_alarm_sounded_at = ?, updated_at = ? WHERE device_id = ? AND remote_alarm = 1 AND remote_alarm_requested_at = ?')
+        .bind(ackNow, ackNow, device.id, alarmAckId).run();
+      if (result.meta.changes) await env.DB.prepare(`
           INSERT INTO audit_logs (id, school_id, user_id, action, entity, entity_id, metadata, created_at)
           VALUES (?, ?, 'system', 'device.alarm_sounded', 'device', ?, ?, ?)
         `).bind(
           crypto.randomUUID(),
           device.school_id,
           device.id,
-          JSON.stringify({ deviceId: device.device_id, status: 'sounded_success', sounded_at: ackNow }),
+          JSON.stringify({ deviceId: device.device_id, status: 'gpio_triggered', sounded_at: ackNow, request_id: alarmAckId }),
           ackNow
-        ),
-      ]);
+        ).run();
+      if (result.meta.changes && device.remote_alarm_requested_at === alarmAckId) device.remote_alarm = 0;
     }
 
     const effectiveFirmware = firmwareVersion || device.firmware_version;
     const sms = supportsHelmetSms(effectiveFirmware) ? await nextHelmetSms(device.id, device.school_id) : {};
-    const configResponse = toDeviceConfig(device);
-
-    // Tự động giải phóng remote_alarm về 0 ngay khi gửi lệnh cho xe, tránh xe bị kẹt lặp còi gây sụt nguồn/brownout
-    if (device.remote_alarm) {
+    const modernFirmware = firmwareVersion?.includes('alarm-ack-v1') === true;
+    const requestedMs = device.remote_alarm_requested_at ? Date.parse(device.remote_alarm_requested_at) : NaN;
+    // Do not trigger old commands unexpectedly after a long outage.
+    const expired = !Number.isFinite(requestedMs) || Date.now() - requestedMs > 120_000 || requestedMs > Date.now() + 10_000;
+    if (device.remote_alarm && (expired || !modernFirmware)) {
       const now = new Date().toISOString();
-      await env.DB.prepare('UPDATE device_configs SET remote_alarm = 0, updated_at = ? WHERE device_id = ?').bind(now, device.id).run();
+      await env.DB.prepare('UPDATE device_configs SET remote_alarm = 0, updated_at = ? WHERE device_id = ? AND remote_alarm_requested_at IS ?')
+        .bind(now, device.id, device.remote_alarm_requested_at).run();
+      if (expired) device.remote_alarm = 0;
     }
 
+    const configResponse = toDeviceConfig(device);
     return json({ success: true, config: { ...configResponse, ...sms } });
   } catch (error) {
     return apiError(error);
@@ -206,7 +214,7 @@ async function enforceRateLimit(deviceId: string) {
 }
 
 function toDeviceConfig(device: DeviceRow) {
-  return { speed_limit: device.speed_limit, speed_alert_enabled: Boolean(device.speed_alert_enabled), buzzer_enabled: Boolean(device.buzzer_enabled), remote_alarm: Boolean(device.remote_alarm), config_version: device.version };
+  return { speed_limit: device.speed_limit, speed_alert_enabled: Boolean(device.speed_alert_enabled), buzzer_enabled: Boolean(device.buzzer_enabled), remote_alarm: Boolean(device.remote_alarm), alarm_request_id: device.remote_alarm_requested_at, config_version: device.version };
 }
 
 function resolveDeviceToken(request: Request, body?: Record<string, unknown>): string {

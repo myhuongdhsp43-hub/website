@@ -178,7 +178,7 @@ test('subaccounts API route handles student account creation and listing', async
 });
 
 test('firmware includes BLE GATT service, verify_code characteristic, and Flash telemetryUrl', async () => {
-  const firmware = await readFile(new URL('../../01_ESP_XE/TDM2421_FINAL/TDM2421_FINAL.ino', import.meta.url), 'utf8');
+  const firmware = await readFile(new URL('../TDM2421_Full_SMS_VuotToc_Web_v2_7.ino', import.meta.url), 'utf8');
 
   assert.match(firmware, /BLEDevice\.h/);
   assert.match(firmware, /BLEServer\.h/);

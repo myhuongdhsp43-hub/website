@@ -73,9 +73,10 @@ test('dashboard and master admin QR codes include both device_id and verify_code
   assert.match(devicesApiSource, /d\.verify_code/);
 });
 
-test('master admin route authenticates with Admin123@ and supports random generation up to 1 billion', async () => {
+test('master admin route reads its key from a secret and supports random generation up to 1 billion', async () => {
   const masterSource = await readFile(new URL('../app/api/master-admin/route.ts', import.meta.url), 'utf8');
-  assert.match(masterSource, /Admin123@/);
+  assert.match(masterSource, /MASTER_ADMIN_KEY/);
+  assert.doesNotMatch(masterSource, /Admin123@/);
   assert.match(masterSource, /GENERATE_RANDOM_CODE/);
   assert.match(masterSource, /999_999_999/);
   assert.match(masterSource, /CREATE_DEVICE/);

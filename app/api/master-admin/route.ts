@@ -2,9 +2,10 @@ import { env } from 'cloudflare:workers';
 import { ApiError, apiError, json, readJson } from '@/lib/server/http';
 import { ensureSchema } from '@/lib/server/ensure-schema';
 
-const MASTER_ADMIN_KEY = 'Admin123@';
-
 function verifyMasterKey(request: Request, body?: any) {
+  // Key lives in a Cloudflare secret (MASTER_ADMIN_KEY), never in source.
+  const MASTER_ADMIN_KEY = String((env as any).MASTER_ADMIN_KEY || '');
+  if (!MASTER_ADMIN_KEY) throw new ApiError(503, 'Chưa cấu hình MASTER_ADMIN_KEY trên máy chủ.', 'not_configured');
   const headerKey = request.headers.get('x-master-admin-key');
   const bodyKey = body?.master_key;
   if (headerKey !== MASTER_ADMIN_KEY && bodyKey !== MASTER_ADMIN_KEY) {

@@ -69,14 +69,17 @@ export default function MasterAdminPage() {
   // Khôi phục phiên từ sessionStorage
   useEffect(() => {
     const savedKey = sessionStorage.getItem('master_admin_key');
-    if (savedKey === 'Admin123@') {
+    if (savedKey) {
+      // The server is the only place that checks the key.
       setAdminKey(savedKey);
-      setIsAuthenticated(true);
-      loadMasterData(savedKey);
+      loadMasterData(savedKey).then((ok) => {
+        if (ok) setIsAuthenticated(true);
+        else sessionStorage.removeItem('master_admin_key');
+      });
     }
   }, []);
 
-  const loadMasterData = async (key: string) => {
+  const loadMasterData = async (key: string): Promise<boolean> => {
     setLoading(true);
     try {
       const res = await fetch('/api/master-admin', {
@@ -97,21 +100,23 @@ export default function MasterAdminPage() {
     } catch (err: any) {
       console.error('Lỗi master admin:', err);
       setLoginError(err.message);
+      return false;
     } finally {
       setLoading(false);
     }
+    return true;
   };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
-    if (adminKey !== 'Admin123@') {
-      setLoginError('Mã quản trị viên (Admin Key) không chính xác! Vui lòng thử lại.');
+    sessionStorage.setItem('master_admin_key', adminKey);
+    const ok = await loadMasterData(adminKey);
+    if (!ok) {
+      sessionStorage.removeItem('master_admin_key');
       return;
     }
-    sessionStorage.setItem('master_admin_key', adminKey);
     setIsAuthenticated(true);
-    await loadMasterData(adminKey);
   };
 
   const handleLogout = () => {
@@ -214,7 +219,7 @@ export default function MasterAdminPage() {
               </svg>
             </div>
             <h1 className="text-xl font-bold tracking-tight text-white">CỔNG QUẢN TRỊ TỔNG HỆ THỐNG</h1>
-            <p className="text-xs text-slate-400 mt-1">Master Factory & Registry Portal (Mã truy cập: Admin123@)</p>
+            <p className="text-xs text-slate-400 mt-1">Master Factory & Registry Portal (Nhập mã quản trị)</p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
@@ -231,7 +236,7 @@ export default function MasterAdminPage() {
                 type="password"
                 value={adminKey}
                 onChange={(e) => setAdminKey(e.target.value)}
-                placeholder="Nhập mã Admin123@..."
+                placeholder="Nhập mã quản trị..."
                 required
                 className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white font-mono placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500 transition"
               />

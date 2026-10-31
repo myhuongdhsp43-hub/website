@@ -64,7 +64,7 @@ https://antoanxedien-thcs.ten-tai-khoan.workers.dev
 Truy cập vào tên miền Workers vừa nhận được:
 1. **Trang chủ:** `https://<ten-worker>.workers.dev`
 2. **Kích hoạt mã QR học sinh:** `https://<ten-worker>.workers.dev/activate`
-3. **Cổng Master Admin:** `https://<ten-worker>.workers.dev/master-admin` (Nhập mã `Admin123@`)
+3. **Cổng Master Admin:** `https://<ten-worker>.workers.dev/master-admin` (Nhập mã quản trị đã đặt trong secret `MASTER_ADMIN_KEY` của Cloudflare; không lưu mã trong mã nguồn)
 4. **Bảng radar trường học:** `https://<ten-worker>.workers.dev/login`
 
 ---

@@ -44,7 +44,7 @@ export async function POST(request: Request) {
       }
     }
     if (!verifyCode) {
-      verifyCode = Math.floor(100000000 + Math.random() * 900000000).toString();
+      { const buf = new Uint32Array(1); crypto.getRandomValues(buf); verifyCode = (100000000 + (buf[0] % 900000000)).toString(); }
     }
     const deviceToken = `dt_${Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('')}`;
     await env.DB.batch([
@@ -103,8 +103,8 @@ export async function PATCH(request: Request) {
       env.DB.prepare(`UPDATE devices SET device_name = ?, verify_code = COALESCE(?, verify_code), student_id = ?, enabled = ?, updated_at = ? WHERE id = ? AND school_id = ?`).bind(
         requiredText(body.device_name, 'Tên thiết bị', 120), verifyCodeUpdate, studentId ?? null, optionalBoolean(body.enabled, true) ? 1 : 0, now, id, context.schoolId
       ),
-      env.DB.prepare(`UPDATE device_configs SET speed_limit = ?, speed_alert_enabled = ?, buzzer_enabled = ?, remote_alarm = ?, version = version + 1, updated_at = ? WHERE device_id = ?`).bind(
-        speedLimit, optionalBoolean(body.speed_alert_enabled, true) ? 1 : 0, optionalBoolean(body.buzzer_enabled, true) ? 1 : 0, optionalBoolean(body.remote_alarm, false) ? 1 : 0, now, id
+      env.DB.prepare(`UPDATE device_configs SET speed_limit = ?, speed_alert_enabled = ?, buzzer_enabled = ?, remote_alarm = ?, remote_alarm_requested_at = CASE WHEN ? = 1 THEN ? ELSE remote_alarm_requested_at END, version = version + 1, updated_at = ? WHERE device_id = ?`).bind(
+        speedLimit, optionalBoolean(body.speed_alert_enabled, true) ? 1 : 0, optionalBoolean(body.buzzer_enabled, true) ? 1 : 0, optionalBoolean(body.remote_alarm, false) ? 1 : 0, optionalBoolean(body.remote_alarm, false) ? 1 : 0, now, now, id
       ),
     ]);
     await audit(context, 'device.update', 'device', id);

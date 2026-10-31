@@ -143,7 +143,7 @@ export async function GET(request: Request) {
         let level: UnifiedLog['level'] = 'info';
 
         if (r.action === 'device.alarm_sounded') {
-          title = `XÁC NHẬN: Xe ${targetDeviceId || 'Xe'} ĐÃ PHÁT CÒI THÀNH CÔNG!`;
+          title = `XÁC NHẬN: Xe ${targetDeviceId || 'Xe'} báo đã kích hoạt còi`;
           message = `Phần cứng ESP32 đã kích hoạt còi báo động và gửi tín hiệu phản hồi xác nhận qua 4G về máy chủ.`;
           level = 'success';
         } else if (isAlarm) {
