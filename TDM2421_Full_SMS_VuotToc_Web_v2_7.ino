@@ -30,7 +30,7 @@
 // Mã xác thực phần cứng mặc định (dùng khi Flash chưa lưu):
 #define DEFAULT_VERIFY_SECRET "9824"    // Mã xác minh phần cứng (từ 1 đến 1 tỷ)
 #define DEFAULT_DEVICE_ID     "XE01"    // Mã thiết bị mặc định
-#define DEFAULT_DEVICE_TOKEN  ""        // Để trống! KHÔNG cố định token, bo mạch tự nạp vào Flash khi ghép nối!
+#define DEFAULT_DEVICE_TOKEN  "dt_a438c173b29788c087baf8c5d881bef7"        // Token da duoc cap hop le cho xe XE01 tren web
 #define PAIR_BUTTON_PIN 9       // Nút bấm kích hoạt ghép đôi trên bo mạch ESP32-C3 (nút BOOT GPIO9)
 #define PAIR_REQUEST_URL "https://website.myhuongdhsp43.workers.dev/api/device/pair-request"
 #define DEVICE_TOKEN_URL "https://website.myhuongdhsp43.workers.dev/api/device/token"
@@ -823,6 +823,12 @@ bool postJsonOnce(const String &url, const String &body, String &responseBody) {
   const int statusCode = firstComma < 0 ? 0 : postResult.substring(firstComma + 1, secondComma < 0 ? postResult.length() : secondComma).toInt();
   if (modemError != 0 || statusCode < 200 || statusCode >= 300) {
     Serial.printf("[HTTP] POST failed: modem=%d status=%d\n", modemError, statusCode);
+    if (statusCode == 401) {
+      Serial.println("[AUTH] Device token bi tu choi boi Server (401 Unauthorized)! Tu dong xoa token cu trong Flash de dong bo token moi...");
+      activeDeviceToken = "";
+      preferences.remove("deviceToken");
+      lastTokenSyncAttemptAt = 0;
+    }
     sendAT("AT+QHTTPSTOP", 1000);
     return false;
   }
@@ -1257,9 +1263,10 @@ void loadConfig() {
   if (activeVerifySecret.length() == 0) activeVerifySecret = DEFAULT_VERIFY_SECRET;
 
   activeDeviceToken = preferences.getString("deviceToken", "");
-  if (activeDeviceToken.length() == 0 && String(DEFAULT_DEVICE_TOKEN).length() > 0) {
+  if (String(DEFAULT_DEVICE_TOKEN).length() > 0 && activeDeviceToken != String(DEFAULT_DEVICE_TOKEN)) {
     activeDeviceToken = String(DEFAULT_DEVICE_TOKEN);
     preferences.putString("deviceToken", activeDeviceToken);
+    Serial.printf("[FLASH] Da ghi de DEFAULT_DEVICE_TOKEN moi vao bo nho Flash: %s\n", maskSecret(activeDeviceToken).c_str());
   }
 
   Serial.println("\n-------------------------------------------------------");
@@ -1612,6 +1619,8 @@ void loop() {
       Serial.println("[FLASH] Da xoa trang Flash NVS. Bo mach tro ve trang thai ban dau de ghep doi moi!");
     } else if (userCmd == "sync-token") {
       Serial.println("[MANUAL] Dang cuong che dong bo token tu website...");
+      activeDeviceToken = "";
+      preferences.remove("deviceToken");
       lastTokenSyncAttemptAt = 0;
       syncDeviceTokenIfMissing();
     } else if (userCmd == "pair" || userCmd == "boot") {
